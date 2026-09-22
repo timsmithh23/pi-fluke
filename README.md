@@ -15,7 +15,7 @@ Type `fluke` on its own to see this list.
 
 | Command            | What it does |
 |--------------------|--------------|
-| `fluke test`       | Run the network test once. Results show on the small screen and in the terminal |
+| `fluke test`       | Run the network test once, live on the small screen (and in the terminal). Results stay up until `fluke term` |
 | `fluke start`      | **Fluke mode.** The small screen shows "ready", and every cable you plug in gets tested automatically |
 | `fluke term`       | Stop fluke mode and give the small screen back to the terminal |
 | `fluke boot fluke` | When the Pi turns on, go straight into fluke mode |

@@ -11,8 +11,10 @@ move_terminal_to() {
 
 case "$1" in
 
-  test)      # run the network test once
+  test)      # run the network test once, live on the small screen
+    move_terminal_to 0          # move the terminal off the small screen so the results can show
     netcheck "${2:-eth0}"
+    echo "(Results stay on the small screen. Type 'fluke term' to get the terminal back.)"
     ;;
 
   start)     # fluke mode: small screen shows the tester, auto-tests when a cable is plugged in
