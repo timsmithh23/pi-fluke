@@ -4,6 +4,10 @@
 # Usage:  fluke-screen FILE
 #   FILE has one line per row, written as  TAG|text
 #   TAG is PASS (green), FAIL (red), INFO (yellow), HEAD (blue title) or TEXT (white).
+#   PiScout-style summary card rows:
+#     TITLE|left text|right text   -> title bar with a line under it (e.g. "PI FLUKE" ... "CDPv2")
+#     FIELD|LABEL|value            -> big "LABEL: value" row (e.g. "PORT: Gi1/0/24")
+#     BIG|text                     -> big centered white text (e.g. "Waiting for link...")
 #
 # How it works: we draw the text into a picture with Pillow, convert the
 # picture into the screen's pixel format (RGB565 = 2 bytes per pixel) and
@@ -32,16 +36,37 @@ LINE_HEIGHT = 15
 fb, W, H = find_tft()
 font = ImageFont.truetype(FONT, 13)
 bold = ImageFont.truetype(FONT.replace(".ttf", "-Bold.ttf"), 13)
+big = ImageFont.truetype(FONT.replace(".ttf", "-Bold.ttf"), 22)
+BIG_LINE_HEIGHT = 30
 
 # Read the lines; if there are too many to fit, keep the newest ones.
 rows = [line.rstrip("\n").split("|", 1) for line in open(sys.argv[1]) if "|" in line]
-rows = rows[-(H // LINE_HEIGHT):]
+if not any(tag in ("TITLE", "FIELD", "BIG") for tag, _ in rows):
+    rows = rows[-(H // LINE_HEIGHT):]
 
 # Draw each row.
 img = Image.new("RGB", (W, H), "black")
 draw = ImageDraw.Draw(img)
 y = 1
 for tag, text in rows:
+    if tag == "TITLE":                                            # title bar + line under it
+        left, _, right = text.partition("|")
+        draw.text((6, y), left, font=big, fill=COLORS["HEAD"])
+        draw.text((W - 6, y), right, font=big, fill=COLORS["INFO"], anchor="ra")
+        y += BIG_LINE_HEIGHT
+        draw.line((0, y, W, y), fill=COLORS["TEXT"], width=2)
+        y += 8
+        continue
+    if tag == "FIELD":                                            # big "LABEL: value"
+        label, _, value = text.partition("|")
+        draw.text((6, y), label + ":", font=big, fill=COLORS["HEAD"])
+        draw.text((110, y), value[:26], font=big, fill=COLORS["TEXT"])
+        y += BIG_LINE_HEIGHT
+        continue
+    if tag == "BIG":                                              # big centered text
+        draw.text((W // 2, y), text, font=big, fill=COLORS["TEXT"], anchor="ma")
+        y += BIG_LINE_HEIGHT
+        continue
     if tag in ("PASS", "FAIL", "INFO"):
         draw.text((4, y), tag, font=bold, fill=COLORS[tag])      # coloured status word
         draw.text((44, y), text[:53], font=font, fill=COLORS["TEXT"])

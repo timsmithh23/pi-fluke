@@ -9,12 +9,12 @@ READY_FILE=/run/pi-fluke-ready.txt
 
 show_ready() {
   WIFI_IP=$(ip -4 -br addr show wlan0 | awk '{print $3}')
-  {
-    echo "HEAD|PI FLUKE  ready"
-    echo "TEXT|"
-    echo "TEXT|Plug a cable into the ethernet port"
-    echo "TEXT|and the test starts by itself."
-    echo "TEXT|"
+  {                                    # looks like PiScout's "Waiting for link" screen
+    echo "TITLE|PI FLUKE|"
+    echo "BIG|"
+    echo "BIG|Waiting for"
+    echo "BIG|link..."
+    echo "BIG|"
     echo "INFO|ssh admin@${WIFI_IP%/*}"
   } > "$READY_FILE"
   fluke-screen "$READY_FILE"

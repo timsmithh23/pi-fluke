@@ -25,6 +25,25 @@ Type `fluke` on its own to see this list.
 
 `netcheck` also runs the test directly (`netcheck eth1` tests a different port).
 
+## The screen (made to look like PiScout)
+While the test runs, the small screen lists each check live. When it finishes, it switches to a
+summary card laid out like PiScout's display (PiScout is the Pi Zero e-paper project this was based on):
+
+```
+PI FLUKE                    CDPv2      <- which protocol told us the switch info
+──────────────────────────────────
+SW:    SWITCH-01                        <- switch name
+IP:    10.10.1.2                        <- switch's management IP
+PORT:  Gi1/0/24                         <- switch port this jack is wired to
+VLAN:  120                              <- data VLAN
+VOICE: 130                              <- voice VLAN (if the switch sends it)
+LINK:  1G FD                            <- speed + full/half duplex
+INFO DHCP 10.10.120.55  GW yes  NET yes
+INFO ssh admin@192.168.8.160
+```
+
+In fluke mode, with no cable plugged in, it shows PiScout's "Waiting for link..." screen.
+
 ## What the test checks
 
 **Part 1, the Pi's own connection** (wifi, used for SSH)

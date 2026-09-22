@@ -73,7 +73,7 @@ if [ -n "$IP" ]; then out PASS "DHCP $IP"; else out FAIL "no DHCP address (15s)"
 GATEWAY=$(ip route show default dev $ETH | awk '{print $3; exit}')
 if [ -n "$GATEWAY" ]; then
   out PASS "gateway $GATEWAY"
-  if ping -I $ETH -c3 -W2 $GATEWAY >/dev/null 2>&1; then out PASS "gateway ping ok"; else out INFO "gateway no ping (ICMP blocked?)"; fi
+  if ping -I $ETH -c3 -W2 $GATEWAY >/dev/null 2>&1; then out PASS "gateway ping ok"; GW_OK=yes; else out INFO "gateway no ping (ICMP blocked?)"; fi
 else
   out FAIL "no gateway from DHCP"
 fi
@@ -83,7 +83,7 @@ DNS=$(nmcli -t -g IP4.DNS dev show $ETH | tr '\n' ' ')
 out INFO "DNS: ${DNS:-none}"
 
 # 6. Can this jack reach the internet?
-if ping -I $ETH -c3 -W2 1.1.1.1 >/dev/null 2>&1; then out PASS "internet ping via $ETH"; else out FAIL "no internet ping via $ETH"; fi
+if ping -I $ETH -c3 -W2 1.1.1.1 >/dev/null 2>&1; then out PASS "internet ping via $ETH"; NET_OK=yes; else out FAIL "no internet ping via $ETH"; fi
 
 # 7. Can it load a web page? (a different answer than 200 usually means a login/captive portal)
 CODE=$(curl -s --interface $ETH -m 6 -o /dev/null -w '%{http_code}' http://detectportal.firefox.com/success.txt)
@@ -112,10 +112,33 @@ if [ -n "$INFO_KV" ]; then
   SWITCH=$(get chassis.name)
   PORT=$(get port.ifname); [ -z "$PORT" ] && PORT=$(get port.descr); [ -z "$PORT" ] && PORT=$(get port.local)
   VLAN=$(get vlan.vlan-id)
-  out PASS "switch: ${SWITCH:-unknown} ($(get via))"
+  VIA=$(get via)                                                         # CDPv2 / LLDP
+  VOICE=$(echo "$INFO_KV" | grep -i 'voice' | grep -im1 'vid=' | cut -d= -f2)   # voice VLAN (LLDP-MED), if sent
+  out PASS "switch: ${SWITCH:-unknown} ($VIA)"
   out PASS "port: ${PORT:-unknown}"
   [ -n "$VLAN" ] && out INFO "VLAN: $VLAN"
   MGMT=$(get chassis.mgmt-ip); [ -n "$MGMT" ] && out INFO "switch IP: $MGMT"
 else
   out INFO "no switch info (no CDP/LLDP heard)"
 fi
+
+# ================= Summary card (looks like PiScout's screen) =================
+# Short port names like PiScout: GigabitEthernet1/0/24 -> Gi1/0/24
+SHORT_PORT=$(echo "$PORT" | sed -e 's/TenGigabitEthernet/Te/' -e 's/TwoGigabitEthernet/Tw/' \
+                               -e 's/GigabitEthernet/Gi/' -e 's/FastEthernet/Fa/')
+# Link like PiScout: "1G FD" (speed from the kernel, FD = full duplex, HD = half)
+MBPS=$(cat /sys/class/net/$ETH/speed 2>/dev/null)
+[ "${MBPS:-0}" -ge 1000 ] && LINK="$((MBPS / 1000))G" || LINK="${MBPS}M"
+[ "$(cat /sys/class/net/$ETH/duplex 2>/dev/null)" = full ] && LINK="$LINK FD" || LINK="$LINK HD"
+{
+  echo "TITLE|PI FLUKE|${VIA:-no CDP/LLDP}"
+  echo "FIELD|SW|${SWITCH:---}"
+  echo "FIELD|IP|${MGMT:---}"
+  echo "FIELD|PORT|${SHORT_PORT:---}"
+  echo "FIELD|VLAN|${VLAN:---}"
+  echo "FIELD|VOICE|${VOICE:-None}"
+  echo "FIELD|LINK|$LINK"
+  echo "INFO|DHCP ${IP%/*}  GW ${GW_OK:-no}  NET ${NET_OK:-no}"
+  echo "INFO|ssh admin@${WIFI_IP%/*}"
+} > "$SCREEN_FILE"
+[ $USE_SCREEN = yes ] && fluke-screen "$SCREEN_FILE" 2>/dev/null
