@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+# fluke-screen — draws text onto the small TFT screen.
+#
+# Usage:  fluke-screen FILE
+#   FILE has one line per row, written as  TAG|text
+#   TAG is PASS (green), FAIL (red), INFO (yellow), HEAD (blue title) or TEXT (white).
+#
+# How it works: we draw the text into a picture with Pillow, convert the
+# picture into the screen's pixel format (RGB565 = 2 bytes per pixel) and
+# write those bytes straight into the screen's framebuffer device (/dev/fbN).
+
+import glob, sys
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+
+def find_tft():
+    """Return the /dev/fbN of the small screen (its driver name starts with 'fb_', e.g. fb_ili9486)."""
+    for path in sorted(glob.glob("/sys/class/graphics/fb*/name")):
+        if open(path).read().startswith("fb_"):
+            fb = path.split("/")[-2]                      # e.g. "fb2"
+            w, h = open(f"/sys/class/graphics/{fb}/virtual_size").read().strip().split(",")
+            return f"/dev/{fb}", int(w), int(h)
+    sys.exit("fluke-screen: small TFT screen not found")
+
+
+COLORS = {"PASS": (0, 220, 0), "FAIL": (255, 60, 60), "INFO": (255, 200, 0),
+          "HEAD": (80, 170, 255), "TEXT": (230, 230, 230)}
+FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
+LINE_HEIGHT = 18
+
+fb, W, H = find_tft()
+font = ImageFont.truetype(FONT, 15)
+bold = ImageFont.truetype(FONT.replace(".ttf", "-Bold.ttf"), 15)
+
+# Read the lines; if there are too many to fit, keep the newest ones.
+rows = [line.rstrip("\n").split("|", 1) for line in open(sys.argv[1]) if "|" in line]
+rows = rows[-(H // LINE_HEIGHT):]
+
+# Draw each row.
+img = Image.new("RGB", (W, H), "black")
+draw = ImageDraw.Draw(img)
+y = 1
+for tag, text in rows:
+    if tag in ("PASS", "FAIL", "INFO"):
+        draw.text((4, y), tag, font=bold, fill=COLORS[tag])      # coloured status word
+        draw.text((50, y), text[:47], font=font, fill=COLORS["TEXT"])
+    else:
+        draw.text((4, y), text[:52], font=bold, fill=COLORS.get(tag, COLORS["TEXT"]))
+    y += LINE_HEIGHT
+
+# Convert 24-bit colour (R,G,B) to the screen's 16-bit RGB565 and write it out.
+px = np.asarray(img, dtype=np.uint16)
+rgb565 = ((px[..., 0] >> 3) << 11) | ((px[..., 1] >> 2) << 5) | (px[..., 2] >> 3)
+with open(fb, "wb") as f:
+    f.write(rgb565.astype("<u2").tobytes())

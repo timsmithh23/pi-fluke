@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# fluke-daemon — "fluke mode". Runs in the background (as the pi-fluke service).
+# Shows a "ready" screen, and every time a cable is plugged into eth0 it runs
+# netcheck automatically. Unplug and plug into the next jack to test again.
+# You don't run this by hand — use:  fluke start   /   fluke term
+
+ETH=eth0
+READY_FILE=/run/pi-fluke-ready.txt
+
+show_ready() {
+  WIFI_IP=$(ip -4 -br addr show wlan0 | awk '{print $3}')
+  {
+    echo "HEAD|PI FLUKE  ready"
+    echo "TEXT|"
+    echo "TEXT|Plug a cable into the ethernet port"
+    echo "TEXT|and the test starts by itself."
+    echo "TEXT|"
+    echo "INFO|ssh admin@${WIFI_IP%/*}"
+  } > "$READY_FILE"
+  fluke-screen "$READY_FILE"
+}
+
+show_ready
+LAST=0
+COUNT=0
+while true; do
+  NOW=$(cat /sys/class/net/$ETH/carrier 2>/dev/null || echo 0)   # 1 = cable plugged in
+  if [ "$NOW" = 1 ] && [ "$LAST" != 1 ]; then
+    netcheck $ETH          # cable just plugged in -> run the test (results stay on screen)
+  elif [ "$NOW" != 1 ] && [ "$LAST" = 1 ]; then
+    show_ready             # cable just unplugged -> back to the ready screen
+  fi
+  # while nothing is plugged in, refresh the ready screen every 10s (wifi IP may change)
+  COUNT=$((COUNT + 1))
+  [ "$NOW" != 1 ] && [ $((COUNT % 10)) = 0 ] && show_ready
+  LAST=$NOW
+  sleep 1
+done

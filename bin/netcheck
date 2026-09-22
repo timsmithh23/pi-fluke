@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# netcheck — the actual "fluke" test. Checks the Pi's own wifi/SSH, then tests
+# whatever network jack the ethernet cable (eth0) is plugged into.
+#
+# Usage:  netcheck          (tests eth0)
+#         netcheck eth1     (tests a different port)
+#
+# Results print in the terminal AND show on the small screen — unless the
+# small screen is currently being used as the terminal (then it just prints).
+
+ETH=${1:-eth0}
+
+# ---- colours for the terminal ----
+GREEN=$'\e[32m'; RED=$'\e[31m'; YELLOW=$'\e[33m'; BOLD=$'\e[1m'; RESET=$'\e[0m'
+
+# ---- screen setup ----
+SCREEN_FILE=$(mktemp)                    # lines for the small screen get collected here
+trap 'rm -f "$SCREEN_FILE"' EXIT         # delete it when the script ends
+USE_SCREEN=yes
+TFT_NUM=$(grep -l '^fb_' /sys/class/graphics/fb*/name | cut -d/ -f5 | tr -d fb)   # small screen's fb number
+sudo con2fbmap 1 | grep -q "framebuffer $TFT_NUM\$" && USE_SCREEN=no            # terminal is on it? don't draw over it
+
+# out TAG "text"  — print one result to the terminal and the small screen
+out() {
+  case $1 in
+    PASS) echo "  ${GREEN}PASS${RESET} $2" ;;
+    FAIL) echo "  ${RED}FAIL${RESET} $2" ;;
+    INFO) echo "  ${YELLOW}INFO${RESET} $2" ;;
+    HEAD) echo; echo "${BOLD}== $2 ==${RESET}" ;;
+  esac
+  echo "$1|$2" >> "$SCREEN_FILE"
+  [ $USE_SCREEN = yes ] && fluke-screen "$SCREEN_FILE" 2>/dev/null
+}
+
+echo "HEAD|PI FLUKE  $(date '+%H:%M:%S')" > "$SCREEN_FILE"
+
+# ================= Part 1: the Pi's own connection =================
+out HEAD "Management (wlan0/SSH)"
+
+WIFI=$(nmcli -t -f DEVICE,STATE,CONNECTION dev | awk -F: '$1=="wlan0" {print $2" "$3}')
+if [[ $WIFI == connected* ]]; then out PASS "wifi: ${WIFI#connected }"; else out FAIL "wifi not connected"; fi
+
+WIFI_IP=$(ip -4 -br addr show wlan0 | awk '{print $3}')
+[ -n "$WIFI_IP" ] && out INFO "ssh admin@${WIFI_IP%/*}"
+
+if systemctl is-active -q ssh; then out PASS "SSH server running"; else out FAIL "SSH server not running"; fi
+
+if ping -I wlan0 -c2 -W2 1.1.1.1 >/dev/null 2>&1; then out PASS "internet via wifi"; else out FAIL "no internet via wifi"; fi
+
+# ================= Part 2: the jack being tested =================
+out HEAD "Test port ($ETH)"
+
+# 1. Is a live cable plugged in?  (carrier = 1 means yes)
+if [ "$(cat /sys/class/net/$ETH/carrier 2>/dev/null)" != 1 ]; then
+  out FAIL "no link (unplugged/dead jack)"; exit 1
+fi
+out PASS "link up"
+
+# 2. What speed did the jack negotiate?  (e.g. 1000Mb/s Full)
+SPEED=$(sudo ethtool $ETH 2>/dev/null | awk -F': ' '/Speed:/ {s=$2} /Duplex:/ {d=$2} END {print s" "d}')
+out INFO "speed: $SPEED"
+
+# 3. Did the network hand us an IP address (DHCP)?  Wait up to 15 seconds.
+IP=""
+for i in $(seq 1 15); do
+  IP=$(ip -4 -br addr show $ETH | awk '{print $3}')
+  [ -n "$IP" ] && break
+  sleep 1
+done
+if [ -n "$IP" ]; then out PASS "DHCP $IP"; else out FAIL "no DHCP address (15s)"; exit 1; fi
+
+# 4. Gateway (the router for that jack) — and does it answer?
+GATEWAY=$(ip route show default dev $ETH | awk '{print $3; exit}')
+if [ -n "$GATEWAY" ]; then
+  out PASS "gateway $GATEWAY"
+  if ping -I $ETH -c3 -W2 $GATEWAY >/dev/null 2>&1; then out PASS "gateway ping ok"; else out INFO "gateway no ping (ICMP blocked?)"; fi
+else
+  out FAIL "no gateway from DHCP"
+fi
+
+# 5. DNS servers the network gave us
+DNS=$(nmcli -t -g IP4.DNS dev show $ETH | tr '\n' ' ')
+out INFO "DNS: ${DNS:-none}"
+
+# 6. Can this jack reach the internet?
+if ping -I $ETH -c3 -W2 1.1.1.1 >/dev/null 2>&1; then out PASS "internet ping via $ETH"; else out FAIL "no internet ping via $ETH"; fi
+
+# 7. Can it load a web page? (a different answer than 200 usually means a login/captive portal)
+CODE=$(curl -s --interface $ETH -m 6 -o /dev/null -w '%{http_code}' http://detectportal.firefox.com/success.txt)
+case $CODE in
+  200) out PASS "web (HTTP) via $ETH" ;;
+  000) out FAIL "no HTTP via $ETH" ;;
+  *)   out INFO "HTTP $CODE (captive portal?)" ;;
+esac
+
+# 8. Do website names turn into addresses?
+if getent hosts example.com >/dev/null; then out PASS "DNS lookup works"; else out FAIL "DNS lookup failed"; fi

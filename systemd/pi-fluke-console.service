@@ -1,0 +1,11 @@
+# At boot: put the text terminal on the small screen (runs every boot).
+[Unit]
+Description=Pi Fluke - terminal on the small TFT screen
+After=systemd-udev-settle.service getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/fluke _terminal-to-tft
+
+[Install]
+WantedBy=multi-user.target

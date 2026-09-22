@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# fluke — the one command for the Pi Fluke. Type "fluke" on its own for help.
+
+# Which framebuffer (/dev/fbN) is the small screen? Its driver name starts with "fb_".
+TFT_NUM=$(grep -l '^fb_' /sys/class/graphics/fb*/name 2>/dev/null | cut -d/ -f5 | tr -d fb)
+
+# Point the text terminals (tty1-6) at a framebuffer. $1 = fb number.
+move_terminal_to() {
+  for tty in 1 2 3 4 5 6; do sudo con2fbmap $tty $1; done
+}
+
+case "$1" in
+
+  test)      # run the network test once
+    netcheck "${2:-eth0}"
+    ;;
+
+  start)     # fluke mode: small screen shows the tester, auto-tests when a cable is plugged in
+    sudo systemctl start pi-fluke
+    echo "Fluke mode ON. Plug a cable into the ethernet port."
+    ;;
+
+  term)      # give the small screen back to the terminal
+    sudo systemctl stop pi-fluke
+    sudo dd if=/dev/zero of=/dev/fb$TFT_NUM bs=64k status=none 2>/dev/null   # wipe old test results
+    move_terminal_to "$TFT_NUM"
+    echo "Small screen is the terminal again."
+    # If the desktop (startx) is running, it owns the terminal so the screen stays blank.
+    pgrep -x Xorg >/dev/null && echo "Note: the desktop (startx) is running, so the terminal can't draw. Close it or reboot."
+    ;;
+
+  boot)      # choose what the small screen does when the Pi turns on
+    case "$2" in
+      fluke) sudo systemctl enable -q pi-fluke;  echo "On boot: FLUKE mode." ;;
+      term)  sudo systemctl disable -q pi-fluke; echo "On boot: TERMINAL on the small screen." ;;
+      *)     echo "Use:  fluke boot fluke   or   fluke boot term" ;;
+    esac
+    ;;
+
+  status)    # show what's going on right now
+    if systemctl is-active -q pi-fluke; then echo "Now:     FLUKE mode"; else echo "Now:     TERMINAL mode"; fi
+    if systemctl is-enabled -q pi-fluke; then echo "On boot: FLUKE mode"; else echo "On boot: TERMINAL mode"; fi
+    echo "Wifi IP: $(ip -4 -br addr show wlan0 | awk '{print $3}')"
+    ;;
+
+  # --- used by the background services, you don't need to type these ---
+  _terminal-to-tft)  move_terminal_to "$TFT_NUM" ;;
+  _terminal-to-hdmi) move_terminal_to 0 ;;
+
+  *)         # no command (or a typo) -> show help
+    cat <<'HELP'
+Pi Fluke commands:
+  fluke test         run the network test once (results on screen + here)
+  fluke start        FLUKE mode: small screen auto-tests every cable you plug in
+  fluke term         small screen goes back to being the terminal
+  fluke boot fluke   Pi starts in FLUKE mode when it turns on
+  fluke boot term    Pi starts with the TERMINAL on the small screen
+  fluke status       show the current mode, boot mode and wifi IP
+HELP
+    ;;
+esac

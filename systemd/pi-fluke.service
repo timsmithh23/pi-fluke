@@ -1,0 +1,15 @@
+# Fluke mode: the small screen becomes the network tester.
+#   start/stop:  fluke start / fluke term
+#   on boot:     fluke boot fluke / fluke boot term
+[Unit]
+Description=Pi Fluke - fluke mode on the small TFT screen
+After=pi-fluke-console.service NetworkManager.service
+
+[Service]
+ExecStartPre=/usr/local/bin/fluke _terminal-to-hdmi
+ExecStart=/usr/local/bin/fluke-daemon
+ExecStopPost=/usr/local/bin/fluke _terminal-to-tft
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
