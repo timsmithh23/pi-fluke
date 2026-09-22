@@ -35,4 +35,4 @@ Type these in the Pi's terminal, either on the small screen or over SSH.
 |---|---|
 | `fluke` | Show the list of fluke commands |
 | `./install.sh` | Set up everything on a new Pi (run it inside the repo folder) |
-| `killclaude` | Remove Claude Code and the Pi's GitHub login (only exists on this Pi, not in the repo) |
+| `killclaude` | Remove Claude Code, the Pi's GitHub login and all Pi Fluke files from the Pi (the code stays on GitHub). Only exists on this Pi, not in the repo |
