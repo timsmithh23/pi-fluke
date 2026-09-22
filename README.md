@@ -21,6 +21,7 @@ Type `fluke` on its own to see this list.
 | `fluke boot fluke` | When the Pi turns on, go straight into fluke mode |
 | `fluke boot term`  | When the Pi turns on, show the terminal on the small screen (default) |
 | `fluke status`     | Show the current mode, the boot mode and the wifi IP |
+| `fluke calibrate`  | Calibrate the touchscreen: tap the 4 red crosses, then tap around to check the dots land under your finger |
 
 `netcheck` also runs the test directly (`netcheck eth1` tests a different port).
 
@@ -55,6 +56,7 @@ PASS = good, FAIL = problem, INFO = just information.
 | `bin/fluke-daemon` | Fluke mode. Checks every second whether a cable is plugged in, and runs `netcheck` when one is |
 | `systemd/pi-fluke-console.service` | On every boot, puts the terminal on the small screen |
 | `systemd/pi-fluke.service` | Runs `fluke-daemon` in the background. `fluke boot fluke` turns this on at boot |
+| `bin/fluke-calibrate` | Python. Touch calibration: compares where you tapped (raw touch numbers) with where the crosses were, and saves the conversion to `/etc/pi-fluke-touch.json` and the desktop's touch settings |
 | `install.sh` | One-time setup: links the commands into `/usr/local/bin` and installs the services |
 
 **Screens:** Linux treats each screen as a "framebuffer" (`/dev/fb0` = HDMI, `/dev/fb2` = the small

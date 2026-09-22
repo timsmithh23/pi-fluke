@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+# fluke-calibrate — calibrates the small touchscreen.  Run it with:  fluke calibrate
+#
+# How it works:
+#   1. Shows a cross in each corner of the small screen, one at a time. You tap each one.
+#   2. The touch chip reports "raw" numbers (0-4095) for where you tapped. We compare
+#      those with where the cross actually was to work out the conversion from
+#      raw numbers to screen pixels (and whether the X/Y directions are swapped).
+#   3. Saves the result to /etc/pi-fluke-touch.json (for Pi Fluke) and to the desktop's
+#      touch settings (/etc/X11/xorg.conf.d/99-calibration.conf).
+#   4. Test mode: tap anywhere and a dot appears where the screen thinks you touched.
+
+import glob, json, statistics, subprocess, sys, time
+import numpy as np
+sys.stdout.reconfigure(line_buffering=True)   # show messages right away
+import evdev
+from evdev import ecodes
+from PIL import Image, ImageDraw, ImageFont
+
+SAVE_FILE = "/etc/pi-fluke-touch.json"
+X_CONF = "/etc/X11/xorg.conf.d/99-calibration.conf"
+MARGIN = 30                      # how far the crosses are from the screen edges (pixels)
+FONT = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+
+
+# ---------- screen helpers (same idea as fluke-screen) ----------
+def find_tft():
+    for path in sorted(glob.glob("/sys/class/graphics/fb*/name")):
+        if open(path).read().startswith("fb_"):
+            fb = path.split("/")[-2]
+            w, h = open(f"/sys/class/graphics/{fb}/virtual_size").read().strip().split(",")
+            return f"/dev/{fb}", int(w), int(h)
+    sys.exit("small TFT screen not found")
+
+FB, W, H = find_tft()
+
+def show(img):
+    """Write a Pillow picture onto the small screen (RGB565)."""
+    px = np.asarray(img, dtype=np.uint16)
+    rgb565 = ((px[..., 0] >> 3) << 11) | ((px[..., 1] >> 2) << 5) | (px[..., 2] >> 3)
+    with open(FB, "wb") as f:
+        f.write(rgb565.astype("<u2").tobytes())
+
+def screen_with_text(text):
+    img = Image.new("RGB", (W, H), "black")
+    d = ImageDraw.Draw(img)
+    d.multiline_text((W // 2, H // 2), text, font=FONT, fill="white", anchor="mm", align="center")
+    return img, d
+
+
+# ---------- touch helpers ----------
+def find_touch():
+    for path in evdev.list_devices():
+        dev = evdev.InputDevice(path)
+        if "ADS7846" in dev.name or "touch" in dev.name.lower():
+            return dev
+    sys.exit("touchscreen not found")
+
+touch = find_touch()
+
+def wait_for_tap():
+    """Wait for one tap. Returns the raw (x, y) the chip reported (median = ignores jitter)."""
+    xs, ys, down, x, y = [], [], False, None, None
+    for ev in touch.read_loop():
+        if ev.type == ecodes.EV_ABS and ev.code == ecodes.ABS_X: x = ev.value
+        if ev.type == ecodes.EV_ABS and ev.code == ecodes.ABS_Y: y = ev.value
+        if ev.type == ecodes.EV_KEY and ev.code == ecodes.BTN_TOUCH:
+            down = ev.value == 1
+            if not down and len(xs) >= 3:          # finger lifted -> done
+                return statistics.median(xs), statistics.median(ys)
+            if not down: xs, ys = [], []           # too short (a glitch) -> try again
+        if ev.type == ecodes.EV_SYN and down and x is not None and y is not None:
+            xs.append(x); ys.append(y)
+
+
+# ---------- step 1: tap the 4 corners ----------
+targets = [(MARGIN, MARGIN), (W - MARGIN, MARGIN), (MARGIN, H - MARGIN), (W - MARGIN, H - MARGIN)]
+raw = []
+touch.grab()                     # stop the desktop from also reacting to these taps
+try:
+    for n, (tx, ty) in enumerate(targets, 1):
+        img, d = screen_with_text(f"Touch calibration\n\nTap the center of the cross\n({n} of 4)")
+        d.line((tx - 15, ty, tx + 15, ty), fill="red", width=3)
+        d.line((tx, ty - 15, tx, ty + 15), fill="red", width=3)
+        show(img)
+        print(f"Tap cross {n} of 4...")
+        raw.append(wait_for_tap())
+        time.sleep(0.3)
+
+    # ---------- step 2: work out the conversion ----------
+    (x1, y1), (x2, y2), (x3, y3), (x4, y4) = raw
+    # Going left->right across the screen, which raw number changed more? That one is "screen X".
+    swap = abs(y2 - y1) + abs(y4 - y3) > abs(x2 - x1) + abs(x4 - x3)
+    if swap:   # the chip's Y is the screen's X (the screen is rotated)
+        (x1, y1), (x2, y2), (x3, y3), (x4, y4) = (y1, x1), (y2, x2), (y3, x3), (y4, x4)
+
+    left, right = (x1 + x3) / 2, (x2 + x4) / 2     # raw value at the left / right crosses
+    top, bottom = (y1 + y2) / 2, (y3 + y4) / 2     # raw value at the top / bottom crosses
+    per_px_x = (right - left) / (W - 2 * MARGIN)   # raw units per pixel
+    per_px_y = (bottom - top) / (H - 2 * MARGIN)
+    cal = {  # raw values at the very edges of the screen (can be "backwards", that's fine)
+        "swap": swap,
+        "x_min": round(left - MARGIN * per_px_x), "x_max": round(right + MARGIN * per_px_x),
+        "y_min": round(top - MARGIN * per_px_y), "y_max": round(bottom + MARGIN * per_px_y),
+        "width": W, "height": H,
+    }
+    print("Calibration:", cal)
+
+    def to_screen(rx, ry):
+        if cal["swap"]: rx, ry = ry, rx
+        sx = (rx - cal["x_min"]) / (cal["x_max"] - cal["x_min"]) * W
+        sy = (ry - cal["y_min"]) / (cal["y_max"] - cal["y_min"]) * H
+        return int(sx), int(sy)
+
+    # ---------- step 3: save ----------
+    subprocess.run(["sudo", "tee", SAVE_FILE], input=json.dumps(cal, indent=2).encode(),
+                   stdout=subprocess.DEVNULL, check=True)
+    x_conf = f'''Section "InputClass"
+        Identifier      "calibration"
+        MatchProduct    "ADS7846 Touchscreen"
+        Option  "Calibration"   "{cal['x_min']} {cal['x_max']} {cal['y_min']} {cal['y_max']}"
+        Option  "SwapAxes"      "{1 if swap else 0}"
+EndSection
+'''
+    subprocess.run(["sudo", "cp", X_CONF, X_CONF + ".bak"], stderr=subprocess.DEVNULL)
+    subprocess.run(["sudo", "tee", X_CONF], input=x_conf.encode(), stdout=subprocess.DEVNULL, check=True)
+    print(f"Saved to {SAVE_FILE} and {X_CONF} (old one kept as .bak)")
+
+    # ---------- step 4: test it ----------
+    img, d = screen_with_text("Saved!  Test it:\ntap anywhere, a dot shows where\nthe screen thinks you touched.\n\nTap 8 times to finish.")
+    show(img)
+    print("Test: tap anywhere on the small screen (8 taps)...")
+    for i in range(8):
+        sx, sy = to_screen(*wait_for_tap())
+        d.ellipse((sx - 6, sy - 6, sx + 6, sy + 6), fill="lime")
+        show(img)
+    img, d = screen_with_text("Calibration done!")
+    show(img)
+    print("Done. (The desktop picks up the new setting next time it starts.)")
+finally:
+    touch.ungrab()

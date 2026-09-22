@@ -31,6 +31,12 @@ case "$1" in
     pgrep -x Xorg >/dev/null && echo "Note: the desktop (startx) is running, so the terminal can't draw. Close it or reboot."
     ;;
 
+  calibrate) # line up the touchscreen: tap 4 crosses, then test with some taps
+    sudo systemctl stop pi-fluke      # fluke mode would draw over the crosses
+    move_terminal_to 0
+    fluke-calibrate
+    ;;
+
   boot)      # choose what the small screen does when the Pi turns on
     case "$2" in
       fluke) sudo systemctl enable -q pi-fluke;  echo "On boot: FLUKE mode." ;;
