@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-# calibrate — shortcut for "fluke calibrate" (touchscreen calibration)
-exec fluke calibrate
