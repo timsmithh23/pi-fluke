@@ -64,6 +64,7 @@ Pi Fluke commands:
   fluke boot fluke   Pi starts in FLUKE mode when it turns on
   fluke boot term    Pi starts with the TERMINAL on the small screen
   fluke status       show the current mode, boot mode and wifi IP
+  fluke calibrate    calibrate the touchscreen (tap the 4 crosses)
 HELP
     ;;
 esac
