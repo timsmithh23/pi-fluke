@@ -95,3 +95,27 @@ esac
 
 # 8. Do website names turn into addresses?
 if getent hosts example.com >/dev/null; then out PASS "DNS lookup works"; else out FAIL "DNS lookup failed"; fi
+
+# 9. Which switch and port is this jack wired to?
+#    Switches announce themselves on every port: Cisco uses CDP (every 60s), others LLDP (every 30s).
+#    The lldpd service listens for these in the background, so we just ask it what it heard.
+#    A fresh cable can take up to a minute before the first announcement arrives.
+switch_info() { sudo lldpctl -f keyvalue $ETH 2>/dev/null; }
+if [ -z "$(switch_info)" ]; then
+  out INFO "waiting for switch info (up to 60s)..."
+  for i in $(seq 1 65); do [ -n "$(switch_info)" ] && break; sleep 1; done
+fi
+sed -i '/waiting for switch/d' "$SCREEN_FILE"     # remove the "waiting" line from the screen
+INFO_KV=$(switch_info)
+get() { echo "$INFO_KV" | grep -m1 "^lldp\.$ETH\.$1=" | cut -d= -f2-; }   # get FIELD -> its value
+if [ -n "$INFO_KV" ]; then
+  SWITCH=$(get chassis.name)
+  PORT=$(get port.ifname); [ -z "$PORT" ] && PORT=$(get port.descr); [ -z "$PORT" ] && PORT=$(get port.local)
+  VLAN=$(get vlan.vlan-id)
+  out PASS "switch: ${SWITCH:-unknown} ($(get via))"
+  out PASS "port: ${PORT:-unknown}"
+  [ -n "$VLAN" ] && out INFO "VLAN: $VLAN"
+  MGMT=$(get chassis.mgmt-ip); [ -n "$MGMT" ] && out INFO "switch IP: $MGMT"
+else
+  out INFO "no switch info (no CDP/LLDP heard)"
+fi

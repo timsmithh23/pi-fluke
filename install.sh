@@ -2,7 +2,11 @@
 # install.sh — sets up the Pi Fluke commands. Run once:  ./install.sh
 # Commands are linked (not copied), so editing files in this folder takes effect right away.
 cd "$(dirname "$0")"
-sudo apt-get install -y python3-pil python3-numpy fonts-dejavu-core ethtool fbset >/dev/null
+sudo apt-get install -y python3-pil python3-numpy fonts-dejavu-core ethtool fbset lldpd >/dev/null
+
+# lldpd = listens for the switch name/port (Cisco CDP + LLDP). Listen-only, eth0 only.
+echo 'DAEMON_ARGS="-r -c -I eth0"' | sudo tee /etc/default/lldpd >/dev/null
+sudo systemctl enable -q lldpd && sudo systemctl restart lldpd
 
 for f in bin/*; do
   chmod +x "$f"

@@ -41,6 +41,7 @@ Type `fluke` on its own to see this list.
 6. **Internet ping** through that jack
 7. **Web (HTTP)** through that jack. A code other than 200 usually means a login page (captive portal)
 8. **DNS lookup**: can names like example.com be turned into IP addresses?
+9. **Switch + port**: the switch's name and the exact port (e.g. `GigabitEthernet1/0/12`), plus VLAN and the switch's IP if it sends them. Cisco switches announce this with **CDP** every 60s and other brands use **LLDP** every 30s. The `lldpd` service listens for it in the background (listen-only, it never sends anything), so the test can take up to a minute on a freshly plugged cable
 
 PASS = good, FAIL = problem, INFO = just information.
 

@@ -27,11 +27,11 @@ def find_tft():
 COLORS = {"PASS": (0, 220, 0), "FAIL": (255, 60, 60), "INFO": (255, 200, 0),
           "HEAD": (80, 170, 255), "TEXT": (230, 230, 230)}
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
-LINE_HEIGHT = 18
+LINE_HEIGHT = 15
 
 fb, W, H = find_tft()
-font = ImageFont.truetype(FONT, 15)
-bold = ImageFont.truetype(FONT.replace(".ttf", "-Bold.ttf"), 15)
+font = ImageFont.truetype(FONT, 13)
+bold = ImageFont.truetype(FONT.replace(".ttf", "-Bold.ttf"), 13)
 
 # Read the lines; if there are too many to fit, keep the newest ones.
 rows = [line.rstrip("\n").split("|", 1) for line in open(sys.argv[1]) if "|" in line]
@@ -44,9 +44,9 @@ y = 1
 for tag, text in rows:
     if tag in ("PASS", "FAIL", "INFO"):
         draw.text((4, y), tag, font=bold, fill=COLORS[tag])      # coloured status word
-        draw.text((50, y), text[:47], font=font, fill=COLORS["TEXT"])
+        draw.text((44, y), text[:53], font=font, fill=COLORS["TEXT"])
     else:
-        draw.text((4, y), text[:52], font=bold, fill=COLORS.get(tag, COLORS["TEXT"]))
+        draw.text((4, y), text[:58], font=bold, fill=COLORS.get(tag, COLORS["TEXT"]))
     y += LINE_HEIGHT
 
 # Convert 24-bit colour (R,G,B) to the screen's 16-bit RGB565 and write it out.
