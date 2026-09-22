@@ -228,6 +228,8 @@ MBPS=$(cat /sys/class/net/$ETH/speed 2>/dev/null)
   echo "INFO|DHCP ${IP%/*}  GW ${GW_OK:-no}  NET ${NET_OK:-no}"
   # Small line: how to SSH into the Pi.
   echo "INFO|ssh admin@${WIFI_IP%/*}"
+  # Touch buttons along the bottom: SPEED (speed test) and END (back to the terminal).
+  echo "BUTTONS|SPEED END"
 } > "$SCREEN_FILE"
 # Draw the summary card on the small screen (if allowed).
 [ $USE_SCREEN = yes ] && fluke-screen "$SCREEN_FILE" 2>/dev/null

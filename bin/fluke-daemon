@@ -28,6 +28,8 @@ show_ready() {
     echo "BIG|"
     # Small line with the ssh command ("%/*" removes the "/24").
     echo "INFO|ssh admin@${WIFI_IP%/*}"
+    # An END button at the bottom (leave fluke mode).
+    echo "BUTTONS|END"
   } > "$READY_FILE"
   # Draw it on the small screen.
   fluke-screen "$READY_FILE"
@@ -35,6 +37,8 @@ show_ready() {
 
 # Show the waiting screen once at the start.
 show_ready
+# Start the button watcher in the background ("&" = don't wait for it) so SPEED / END taps work.
+fluke-touch &              # makes the on-screen SPEED / END buttons work
 # LAST = was a cable plugged in last time we checked? (0 = no)
 LAST=0
 # COUNT = how many seconds we've been running (used for refreshing the screen).

@@ -20,8 +20,13 @@ Type `fluke` on its own to see this list.
 | `fluke term`       | Stop fluke mode and give the small screen back to the terminal |
 | `fluke boot fluke` | When the Pi turns on, go straight into fluke mode |
 | `fluke boot term`  | When the Pi turns on, show the terminal on the small screen (default) |
+| `fluke speed`      | Internet speed test (download, upload, ping) through the ethernet jack |
 | `fluke status`     | Show the current mode, the boot mode and the wifi IP |
 | `xinput-calibrator` (or `fluke calibrate`) | Calibrate the touchscreen: tap the 4 red crosses, then tap around to check the dots land under your finger |
+
+**Touch buttons:** the result screen has **SPEED** (run a speed test) and **END** (leave the tester and
+put the terminal back on the small screen) along the bottom. The "Waiting for link..." screen has END.
+The buttons need the touchscreen to be calibrated first (`xinput-calibrator`).
 
 `netcheck` also runs the test directly (`netcheck eth1` tests a different port).
 
@@ -75,6 +80,8 @@ so you can read any file top to bottom.
 | `bin/fluke` | The main command. Reads the word after `fluke` and runs the matching step |
 | `bin/netcheck` | The test itself: a list of checks, each printing PASS/FAIL/INFO |
 | `bin/fluke-screen` | Python. Draws the result lines as a picture and writes it straight into the screen's memory (`/dev/fb2`) |
+| `bin/fluke-touch` | Python. Watches the touchscreen in the background and runs `fluke speed` / `fluke end` when you tap SPEED / END |
+| `bin/fluke-speed` | Speed test through the ethernet jack using `speedtest-cli`, shown as a card on the screen |
 | `bin/fluke-daemon` | Fluke mode. Checks every second whether a cable is plugged in, and runs `netcheck` when one is |
 | `systemd/pi-fluke-console.service` | On every boot, puts the terminal on the small screen |
 | `systemd/pi-fluke.service` | Runs `fluke-daemon` in the background. `fluke boot fluke` turns this on at boot |

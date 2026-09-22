@@ -7,8 +7,8 @@
 # Go into the folder this script is in (so "bin/..." paths work from anywhere).
 cd "$(dirname "$0")"
 # Install the programs we need: Pillow + numpy (drawing), a font, ethtool (link speed), fbset (screens),
-# lldpd (switch name/port), python3-evdev (reading the touchscreen).
-sudo apt-get install -y python3-pil python3-numpy fonts-dejavu-core ethtool fbset lldpd python3-evdev >/dev/null
+# lldpd (switch name/port), python3-evdev (reading the touchscreen), speedtest-cli (speed test).
+sudo apt-get install -y python3-pil python3-numpy fonts-dejavu-core ethtool fbset lldpd python3-evdev speedtest-cli >/dev/null
 
 # lldpd = listens for the switch name/port (Cisco CDP + LLDP). Listen-only, eth0 only.
 # -r = receive only (never send), -c = understand Cisco CDP, -I eth0 = only listen on the ethernet port.
