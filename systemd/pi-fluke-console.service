@@ -1,11 +1,20 @@
 # At boot: put the text terminal on the small screen (runs every boot).
+# (A "service" file tells Linux how and when to run a program in the background.)
+
+# [Unit] = what this service is and when it runs.
 [Unit]
+# A name shown in "systemctl status".
 Description=Pi Fluke - terminal on the small TFT screen
+# Wait until the screens/devices are set up and the login terminal (tty1) has started.
 After=systemd-udev-settle.service getty@tty1.service
 
+# [Service] = what to run.
 [Service]
+# "oneshot" = run once and finish (not a program that keeps running).
 Type=oneshot
+# The command: move the terminal onto the small screen.
 ExecStart=/usr/local/bin/fluke _terminal-to-tft
 
+# [Install] = when it's "enabled", start it during normal boot.
 [Install]
 WantedBy=multi-user.target

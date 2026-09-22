@@ -67,6 +67,9 @@ PASS = good, FAIL = problem, INFO = just information.
 
 ## How it works (the files)
 
+Every script in this repo has a plain-English `#` comment above each line of code explaining what it does,
+so you can read any file top to bottom.
+
 | File | Job |
 |------|-----|
 | `bin/fluke` | The main command. Reads the word after `fluke` and runs the matching step |

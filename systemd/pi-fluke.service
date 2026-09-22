@@ -1,15 +1,26 @@
 # Fluke mode: the small screen becomes the network tester.
 #   start/stop:  fluke start / fluke term
 #   on boot:     fluke boot fluke / fluke boot term
+# (A "service" file tells Linux how and when to run a program in the background.)
+
+# [Unit] = what this service is and when it runs.
 [Unit]
+# A name shown in "systemctl status".
 Description=Pi Fluke - fluke mode on the small TFT screen
+# Start after the boot terminal service and after networking (NetworkManager) is up.
 After=pi-fluke-console.service NetworkManager.service
 
+# [Service] = what to run.
 [Service]
+# Before starting: move the terminal off the small screen (to HDMI) so it doesn't cover the tester.
 ExecStartPre=/usr/local/bin/fluke _terminal-to-hdmi
+# The main program: watch for cables and run the test.
 ExecStart=/usr/local/bin/fluke-daemon
+# After stopping: put the terminal back on the small screen.
 ExecStopPost=/usr/local/bin/fluke _terminal-to-tft
+# If it crashes, start it again automatically.
 Restart=on-failure
 
+# [Install] = "fluke boot fluke" enables this, so it starts during normal boot.
 [Install]
 WantedBy=multi-user.target
