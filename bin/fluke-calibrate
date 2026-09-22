@@ -66,9 +66,9 @@ def wait_for_tap():
         if ev.type == ecodes.EV_ABS and ev.code == ecodes.ABS_Y: y = ev.value
         if ev.type == ecodes.EV_KEY and ev.code == ecodes.BTN_TOUCH:
             down = ev.value == 1
-            if not down and len(xs) >= 3:          # finger lifted -> done
+            if not down and xs:                    # finger lifted -> done
+                print(f"  tap: raw {statistics.median(xs):.0f},{statistics.median(ys):.0f} ({len(xs)} readings)")
                 return statistics.median(xs), statistics.median(ys)
-            if not down: xs, ys = [], []           # too short (a glitch) -> try again
         if ev.type == ecodes.EV_SYN and down and x is not None and y is not None:
             xs.append(x); ys.append(y)
 

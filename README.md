@@ -21,7 +21,7 @@ Type `fluke` on its own to see this list.
 | `fluke boot fluke` | When the Pi turns on, go straight into fluke mode |
 | `fluke boot term`  | When the Pi turns on, show the terminal on the small screen (default) |
 | `fluke status`     | Show the current mode, the boot mode and the wifi IP |
-| `fluke calibrate`  | Calibrate the touchscreen: tap the 4 red crosses, then tap around to check the dots land under your finger |
+| `calibrate` (or `fluke calibrate`) | Calibrate the touchscreen: tap the 4 red crosses, then tap around to check the dots land under your finger |
 
 `netcheck` also runs the test directly (`netcheck eth1` tests a different port).
 
