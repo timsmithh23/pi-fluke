@@ -19,6 +19,19 @@ The code lives in `~/pi-fluke` on a fresh setup. On our current Pi it's still `~
 
 Don't just pull the power, shut it down first. That's how SD cards get corrupted.
 
+## See the Pi's screen on your computer
+
+Live view of the small screen that you can click on like the touchscreen. No VM needed.
+
+1. Get a free VNC viewer once: RealVNC Viewer or TigerVNC (Windows / Mac / Linux). On a Mac the built-in Screen Sharing works too.
+2. On your computer, run this and leave it open:
+   ```
+   ssh -t -L 5901:localhost:5901 admin@raspberrypi.local notafluke view
+   ```
+3. In the VNC viewer connect to `localhost:5901`.
+
+Ctrl-C in the ssh window stops sharing. The GUI keeps running on the Pi. The screen only gets shared through your SSH login, so nobody else on the network can see it.
+
 ## Put a new file on the Pi
 
 Say Claude gave you a new `wifi.py`. From your computer, in the folder with the file:

@@ -12,6 +12,7 @@ Everyday how-to, testing other versions and getting new code on the Pi: see [CHE
 | `notafluke -f` | same, but in the foreground (Ctrl-C to stop) |
 | `notafluke stop` | close it and give the small screen back to the terminal |
 | `notafluke calibrate` | calibrate the touchscreen |
+| `notafluke view` | see and use the small screen from your computer (VNC, see the cheat sheet) |
 | `notafluke log` | show the GUI's output and errors |
 | `notafluke test` | run the tests (no sudo, cable or screen needed) |
 | `notafluke update` | pull the latest code for this branch and restart |
