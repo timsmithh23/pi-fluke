@@ -93,6 +93,28 @@ Live view of the small screen that you can click on like the touchscreen. No VM 
 
 Ctrl-C in the ssh window stops sharing. The GUI keeps running on the Pi. The screen only gets shared through your SSH login, so nobody else on the network can see it.
 
+## Open the GUI on your computer instead
+
+This runs the GUI on the Pi but draws the window on your own computer, through your SSH connection. Good for testing changes without looking at the little screen.
+
+1. Your computer needs an X server once:
+   - Windows: MobaXterm (free, has SSH and X built in, easiest), or VcXsrv
+   - Mac: XQuartz
+   - Linux: nothing, it's already there
+2. Connect with X forwarding turned on:
+   ```
+   ssh -X admin@raspberrypi.local
+   ```
+   (in MobaXterm just open a normal SSH session, it's on by default)
+3. Run:
+   ```
+   notafluke window
+   ```
+
+The GUI pops up as a window on your computer and the Pi's small screen goes back to the terminal. Ctrl-C (or the ✕) closes it. Run `notafluke` afterwards to put it back on the small screen.
+
+`notafluke view` vs `notafluke window`: `view` shows exactly what's on the Pi's screen right now, `window` runs the GUI on your computer instead of the Pi's screen.
+
 ## Try someone else's version without breaking yours
 
 ```
