@@ -1,24 +1,17 @@
 # entry point. run it through the notafluke launcher (handles sudo and the screen)
-# `notafluke history` prints past scans, no screen or sudo needed
 
 import os
 import sys
 import argparse
 
 from .config import INTERFACE, WIFI_INTERFACE, logger
-from .history import setup_logging, print_history
+from .history import setup_logging
 
 
 def main():
     parser = argparse.ArgumentParser(prog="fluke", description="Not-A-Fluke touchscreen network tester")
-    parser.add_argument("--history", action="store_true", help="print the scan log and exit")
     parser.add_argument("--windowed", action="store_true", help="480x320 window instead of fullscreen (VM / desktop)")
     args = parser.parse_args()
-
-    # --history just reads the log so no sudo or screen needed
-    if args.history:
-        print_history()
-        return
 
     if os.geteuid() != 0:
         print("[!] Needs root for raw packet sniffing. Start it with:  notafluke", file=sys.stderr)

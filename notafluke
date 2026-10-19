@@ -2,14 +2,11 @@
 # notafluke: starts Not-A-Fluke. On the Pi it runs the GUI on the small screen with its own X
 # server (works over SSH). With no small screen it opens a 480x320 window on the desktop.
 #
-#   notafluke            start the GUI in the background
-#   notafluke -f         start it in the foreground (Ctrl-C stops it)
+#   notafluke            start the GUI (-f = in the foreground, Ctrl-C stops it)
 #   notafluke stop       close the GUI, give the screen back to the terminal
-#   notafluke term       give the screen back to the terminal
-#   notafluke calibrate  calibrate the touchscreen
 #   notafluke log        show the GUI's output
-#   notafluke history    print past scans
 #   notafluke test       run the tests
+#   notafluke calibrate  calibrate the touchscreen
 #   notafluke update     git pull and restart the GUI if running
 #   notafluke try <br>   run a GitHub branch from its own copy in ~/fluke-try
 #   notafluke install    install packages, the notafluke command and start-on-boot
@@ -19,11 +16,10 @@ DIR="$(dirname "$(readlink -f "$0")")"
 SELF="$DIR/notafluke"
 LOG=/tmp/notafluke.log
 DISPLAY_NUM=:1
-GUI_MATCH="python3 -m fluke"     # used to find the running GUI
+GUI_MATCH="^python3 -m fluke( |$)"   # the running GUI (^ so it only matches the GUI itself)
 
 # commands that don't need root
 case "$1" in
-  history) cd "$DIR" && exec python3 -m fluke --history ;;
   test)    cd "$DIR" && exec python3 -m unittest discover -s tests -v ;;
   log)     cat "$LOG"; exit 0 ;;
   update)
@@ -54,6 +50,12 @@ case "$1" in
     fi
     echo "Running $BRANCH ($(git -C "$COPY" log -1 --format='%h %s')) from $COPY"
     exec "$COPY/notafluke" "${@:3}" ;;
+esac
+
+# anything else isn't a command, show the list instead of starting the GUI
+case "$1" in
+  ""|-f|boot|stop|calibrate|install|autostart|blank) ;;
+  *) echo "notafluke: unknown command '$1'"; sed -n '/^#   /s/^# //p' "$SELF"; exit 1 ;;
 esac
 
 # needs root (packet sniffing, X). Re-run with sudo and keep DISPLAY, which sudo drops
@@ -94,9 +96,28 @@ install_all() {
     ln -sf "$SELF" /usr/local/bin/notafluke
     ln -sf "$DIR/fluke-calibrate" /usr/local/bin/fluke-calibrate
   fi
-  # start on boot, only on the Pi (a VM has no small screen to show it on)
-  [ -n "$FB" ] && [ "$1" = "relink" ] && autostart on
+  # start on boot and go black on shutdown, only on the Pi (a VM has no small screen)
+  if [ -n "$FB" ] && [ "$1" = "relink" ]; then autostart on; blank_on_shutdown; fi
   return 0
+}
+
+# runs "notafluke blank" when the Pi shuts down. Before= makes it stop after the GUI does
+blank_on_shutdown() {
+  cat > /etc/systemd/system/notafluke-blank.service <<UNIT
+[Unit]
+Description=Black out the small screen at shutdown
+Before=notafluke.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/bin/notafluke blank
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload && systemctl enable --now notafluke-blank.service
 }
 
 # systemd service that runs "notafluke boot" when the Pi starts. The Exit button still
@@ -138,7 +159,12 @@ closed_screen() {
 
 case "$1" in
   stop) stop; sleep 1; closed_screen; echo "Not-A-Fluke stopped."; exit 0 ;;
-  term) closed_screen; echo "Small screen is the terminal again."; exit 0 ;;
+  # from the shutdown service: stop the console drawing on the small screen and paint it black,
+  # so it's black instead of white once the Pi is off
+  blank)
+    for con in /sys/class/vtconsole/vtcon*/; do grep -q "frame buffer" "$con/name" && echo 0 > "$con/bind"; done
+    [ -n "$FB" ] && dd if=/dev/zero of=/dev/$FB bs=64k status=none 2>/dev/null
+    exit 0 ;;
   calibrate)
     # move the terminal off the screen, calibrate, then put it back
     stop; sleep 1

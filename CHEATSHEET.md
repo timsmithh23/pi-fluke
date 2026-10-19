@@ -11,9 +11,8 @@ The code lives in `~/pi-fluke` on a fresh setup. On our current Pi it's still `~
 | Start the GUI | `notafluke` |
 | Stop it (screen goes back to the terminal) | `notafluke stop` |
 | See errors | `notafluke log` |
-| Past scans | `notafluke history` |
 | Run the tests | `notafluke test` |
-| Screen is blank / stuck | `notafluke term` |
+| Screen is blank / stuck | `notafluke stop` |
 | Touch is off | `notafluke calibrate` |
 | Don't start on boot | `sudo notafluke autostart off` (`on` to undo) |
 | Reboot / shut down | `sudo reboot` / `sudo shutdown now` |
@@ -99,4 +98,5 @@ That installs everything, adds the `notafluke` command and starts it on boot.
 - GUI is stuck: `notafluke stop`, then `notafluke`
 - Can't find the Pi: `ssh admin@raspberrypi.local` works whatever the IP is, and the IP is in the top bar of the GUI
 - It won't stop restarting on boot: `sudo notafluke autostart off`
-- Screen shows garbage after closing: `notafluke term`
+- Screen shows garbage after closing: `notafluke stop`
+- Screen stays white after shutdown: run `sudo rpi-eeprom-config --edit`, change `POWER_OFF_ON_HALT=0` to `1`, save, reboot. Then the Pi really powers off when it shuts down. Change it back to `0` to undo.

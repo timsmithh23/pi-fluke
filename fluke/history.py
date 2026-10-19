@@ -1,5 +1,5 @@
 # scan history: saves each scan to /var/log/fluke-gui/scans.jsonl (newest 500 kept)
-# plus the History / Scan Detail screens. over SSH: notafluke history
+# plus the History / Scan Detail screens
 
 import os
 import sys
@@ -14,7 +14,7 @@ from .config import (LOG_DIR, SCAN_LOG_PATH, EVENT_LOG_PATH, MAX_SCAN_RECORDS, H
                      BG, CARD_BG, BAR_BG, ACCENT, TEXT, MUTED, logger)
 
 
-# --- LOGGING + HISTORY HELPERS (no tkinter, so it works over SSH) ---
+# --- LOGGING + HISTORY HELPERS ---
 
 # logs go to a rotating file in LOG_DIR
 def setup_logging():
@@ -160,26 +160,6 @@ def format_record_detail(record):
         f"PoE: {record.get('switch_poe', '--')}",
     ]
     return "\n".join(lines)
-
-
-# oldest first so the newest ends up at the bottom
-def print_history():
-    records = load_scan_history()
-    if len(records) == 0:
-        print("No scans logged yet.")
-        return
-
-    print(f"{'STARTED':<23} {'SWITCH':<22} {'PORT':<14} {'DOWN':<13} {'UP':<13} {'DONE'}")
-    for record in reversed(records):
-        done = "yes" if record.get("complete") else "no"
-        print(
-            f"{format_stamp(record.get('started_at')):<23} "
-            f"{str(record.get('switch_name', '--'))[:21]:<22} "
-            f"{str(record.get('switch_port', '--'))[:13]:<14} "
-            f"{str(record.get('speed_down', '--')):<13} "
-            f"{str(record.get('speed_up', '--')):<13} "
-            f"{done}"
-        )
 
 
 # --- HISTORY SCREENS (mixed into FlukeApp, see app.py) ---
