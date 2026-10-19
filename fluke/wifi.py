@@ -9,7 +9,7 @@ import subprocess
 import tkinter as tk
 from datetime import datetime
 
-from .config import WIFI_INTERFACE, BG, CARD_BG, BAR_BG, logger
+from .config import WIFI_INTERFACE, BG, CARD_BG, BAR_BG, ACCENT, TEXT, MUTED, GOOD, OK, BAD, logger
 from .graph import MetricsGraph
 from .speed import get_ip, route_interface, run_ping_test, run_bandwidth_test, speed_test_lock
 
@@ -152,15 +152,36 @@ def wifi_link():
     return parse_iw_link(result.stdout)
 
 
-# green strong, yellow ok, orange weak, red very weak
-def signal_color(dbm):
+SIGNAL_WORDS = ["Weak", "Fair", "Good", "Excellent"]
+SIGNAL_COLORS = [BAD, "#FFA500", OK, GOOD]
+
+
+# 0 = weak .. 3 = excellent
+def signal_level(dbm):
     if dbm >= -60:
-        return "#76FF03"
+        return 3
     if dbm >= -70:
-        return "#FFD700"
+        return 2
     if dbm >= -80:
-        return "#FFA500"
-    return "#FF5252"
+        return 1
+    return 0
+
+
+def signal_color(dbm):
+    return SIGNAL_COLORS[signal_level(dbm)]
+
+
+# ▂▄▆█ with one bar per level
+def signal_bars(dbm):
+    return "▂▄▆█"[:signal_level(dbm) + 1].ljust(4)
+
+
+def band_name(freq):
+    if freq < 3000:
+        return "2.4 GHz"
+    if freq < 5925:
+        return "5 GHz"
+    return "6 GHz"
 
 
 # very rough guess (assumes 20 dBm AP, indoor loss), can be off by 2x
@@ -175,105 +196,75 @@ def estimate_distance(dbm, freq):
     return "~" + str(round(metres)) + " m"
 
 
-def format_ap_detail(ap):
-    if ap["freq"] < 3000:
-        band = "2.4 GHz"
-    elif ap["freq"] < 5925:
-        band = "5 GHz"
-    else:
-        band = "6 GHz"
-
-    quality = 2 * (ap["signal"] + 100)   # -50 dBm+ = 100%, -100 dBm = 0%
-    if quality > 100:
-        quality = 100
-    if quality < 0:
-        quality = 0
-
-    lines = [
-        f"SSID:     {ap['ssid']}",
-        f"BSSID:    {ap['bssid']}",
-        f"Signal:   {ap['signal']} dBm ({quality}%)",
-        f"Distance: {estimate_distance(ap['signal'], ap['freq'])} (rough)",
-        f"Channel:  {ap['channel']} ({band})",
-        f"Freq:     {ap['freq']} MHz",
-        f"Width:    {ap['width']}",
-        f"Security: {ap['security']}",
-        f"Standard: {ap['standard']}",
-        f"Clients:  {ap['clients']}",
-        f"Ch. busy: {ap['busy']}",
+# what the AP info screen shows, in plain words: [(label, value), ...]
+def ap_detail_rows(ap):
+    security = "Open (no password)" if ap["security"] == "OPEN" else f"Locked ({ap['security']})"
+    rows = [
+        ("Name", ap["ssid"]),
+        ("Signal", f"{SIGNAL_WORDS[signal_level(ap['signal'])]} ({ap['signal']} dBm)"),
+        ("Distance", f"{estimate_distance(ap['signal'], ap['freq'])} (rough)"),
+        ("Band", f"{band_name(ap['freq'])}, channel {ap['channel']}"),
+        ("Security", security),
+        ("Wi-Fi type", ap["standard"]),
+        ("Devices on it", ap["clients"]),
+        ("Channel busy", ap["busy"]),
+        ("MAC", ap["bssid"]),
     ]
     if ap["connected"]:
-        lines.append("")
-        lines.append("(the Pi's own wifi is on this AP)")
-    return "\n".join(lines)
+        rows.append(("", "The Pi is connected to this one"))
+    return rows
 
 
 # --- WI-FI SCREENS (mixed into FlukeApp, see app.py) ---
 
 class WifiScreens:
 
-    # one button per AP, strongest first
+    # list of nearby networks, strongest first
     def build_wifi_ui(self):
         self.wifi_scanning = False
         self.wifi_frame = tk.Frame(self.container, bg=BG)
-        self.make_header(self.wifi_frame, "WI-FI SCANNER")
+        self.make_switcher(self.wifi_frame, [("Networks", self.show_wifi_frame), ("Speed", self.open_wifi_speed)], "Networks")
 
-        bar = tk.Frame(self.wifi_frame, bg=BG)
-        bar.pack(side=tk.BOTTOM, fill=tk.X, pady=4)
-        self.wifi_scan_button = self.make_button(bar, "Scan", self.start_wifi_scan)
-        self.wifi_scan_button.pack(side=tk.LEFT, expand=True)
-        self.make_button(bar, "Speed Test", self.open_wifi_speed).pack(side=tk.LEFT, expand=True)
-        self.make_button(bar, "Back", self.go_back_to_main).pack(side=tk.LEFT, expand=True)
-
-        self.wifi_status_lbl = tk.Label(
-            self.wifi_frame, text="", font=("Helvetica", 10), bg=BG, fg="#888888"
-        )
-        self.wifi_status_lbl.pack(fill=tk.X)
+        top = tk.Frame(self.wifi_frame, bg=BG)
+        top.pack(fill=tk.X, padx=8)
+        self.wifi_status_lbl = tk.Label(top, text="", font=("Helvetica", 10), bg=BG, fg=MUTED)
+        self.wifi_status_lbl.pack(side=tk.LEFT)
+        self.wifi_scan_button = self.make_button(top, "↻ Scan", self.start_wifi_scan, size=11)
+        self.wifi_scan_button.pack(side=tk.RIGHT, pady=2)
 
         self.wifi_canvas, self.wifi_rows = self.make_scroll_area(self.wifi_frame)
 
-    # shown when a row is tapped
+    # shown when a network is tapped
     def build_ap_ui(self):
         self.ap_frame = tk.Frame(self.container, bg=BG)
-        self.make_header(self.ap_frame, "ACCESS POINT")
-
-        self.make_button(self.ap_frame, "Back", self.show_wifi_frame).pack(side=tk.BOTTOM, pady=4)
-
+        self.make_header(self.ap_frame, "Network info", back=self.show_wifi_frame)
         self.ap_canvas, ap_inner = self.make_scroll_area(self.ap_frame)
-        self.ap_lbl = tk.Label(
-            ap_inner, text="", font=("Courier", 12, "bold"),
-            bg=BG, fg="#00E5FF", justify=tk.LEFT, anchor="nw"
-        )
-        self.ap_lbl.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+        self.ap_card = tk.Frame(ap_inner, bg=BG)
+        self.ap_card.pack(fill=tk.X)
 
-    # same graph as the results screen but over wifi instead of the cable
+    # same graph as the Cable tab but over wifi instead of the cable
     def build_wifi_speed_ui(self):
         self.wifi_speed_running = False
+        self.wifi_speed_done = False
         self.wifi_speed_frame = tk.Frame(self.container, bg=BG)
-        self.make_header(self.wifi_speed_frame, "WI-FI SPEED TEST")
+        self.make_switcher(self.wifi_speed_frame, [("Networks", self.show_wifi_frame), ("Speed", self.open_wifi_speed)], "Speed")
 
-        bar = tk.Frame(self.wifi_speed_frame, bg=BG)
-        bar.pack(side=tk.BOTTOM, fill=tk.X, pady=4)
-        self.wifi_speed_button = self.make_button(bar, "Run Again", self.start_wifi_speed_test)
-        self.wifi_speed_button.pack(side=tk.LEFT, expand=True)
-        self.make_button(bar, "Back", self.show_wifi_frame).pack(side=tk.LEFT, expand=True)
-
-        self.wifi_speed_status_lbl = tk.Label(
-            self.wifi_speed_frame, text="", font=("Helvetica", 11), bg=BG, fg="#00E5FF"
-        )
-        self.wifi_speed_status_lbl.pack(fill=tk.X)
+        top = tk.Frame(self.wifi_speed_frame, bg=BG)
+        top.pack(fill=tk.X, padx=8)
+        self.wifi_speed_status_lbl = tk.Label(top, text="", font=("Helvetica", 10), bg=BG, fg=MUTED,
+                                              wraplength=280, justify=tk.LEFT)
+        self.wifi_speed_status_lbl.pack(side=tk.LEFT)
+        self.wifi_speed_button = self.make_button(top, "▶ Run", self.start_wifi_speed_test, size=11)
+        self.wifi_speed_button.pack(side=tk.RIGHT, pady=2)
 
         self.wifi_speed_canvas, inner = self.make_scroll_area(self.wifi_speed_frame)
-        card = tk.Frame(inner, bg=CARD_BG, bd=2, relief=tk.RIDGE)
-        card.pack(fill=tk.X, padx=15, pady=8)
-        tk.Label(card, text="Performance Metrics (Wi-Fi)", font=("Helvetica", 14, "bold"),
-                 bg=CARD_BG, fg="#FFFFFF").pack(pady=4)
+        card = self.make_card(inner, "Wi-Fi speed")
         self.wifi_graph = MetricsGraph(card, WIFI_INTERFACE)
-        self.wifi_graph.canvas.pack(fill=tk.X, padx=8, pady=6)
+        self.wifi_graph.canvas.pack(fill=tk.X, padx=4, pady=4)
 
     def open_wifi(self):
-        if self.current_view == "scanner" or self.current_view == "results":
-            self.return_view = self.current_view
+        if self.current_view == "wifi_speed":
+            return
         self.show_wifi_frame()
         self.start_wifi_scan()
 
@@ -285,11 +276,11 @@ class WifiScreens:
         if self.wifi_scanning:
             return
         if not has_wifi():
-            self.wifi_status_lbl.config(text=f"No Wi-Fi adapter found ({WIFI_INTERFACE})")
+            self.wifi_status_lbl.config(text="No Wi-Fi adapter on this device")
             return
         self.wifi_scanning = True
-        self.wifi_scan_button.config(text="Scanning...", fg="#FFFF00")
-        self.wifi_status_lbl.config(text="Scanning for nearby access points...")
+        self.wifi_scan_button.config(text="Scanning...")
+        self.wifi_status_lbl.config(text="Looking for networks...")
         threading.Thread(target=self.wifi_scan_thread, daemon=True).start()
 
     def wifi_scan_thread(self):
@@ -300,71 +291,83 @@ class WifiScreens:
             access_points = []
         self.root.after(0, self.show_wifi_results, access_points)
 
-    # each row: signal (coloured), name, channel, security
+    # each row: signal bars, name, band and locked/open. tap for more
     def show_wifi_results(self, access_points):
         self.wifi_scanning = False
-        self.wifi_scan_button.config(text="Scan", fg="#FFFFFF")
+        self.wifi_scan_button.config(text="↻ Scan")
 
         for child in self.wifi_rows.winfo_children():
             child.destroy()
         self.wifi_canvas.yview_moveto(0)
 
-        stamp = datetime.now().strftime("%I:%M:%S %p")
-        self.wifi_status_lbl.config(text=f"{len(access_points)} access points  |  scanned {stamp}  |  tap one for info")
+        stamp = datetime.now().strftime("%I:%M %p")
+        self.wifi_status_lbl.config(text=f"{len(access_points)} networks at {stamp}, tap one for info")
 
         if len(access_points) == 0:
-            tk.Label(self.wifi_rows, text="No access points found", font=("Helvetica", 14),
-                     bg=BG, fg="#888888").pack(pady=30)
+            tk.Label(self.wifi_rows, text="No networks found", font=("Helvetica", 14),
+                     bg=BG, fg=MUTED).pack(pady=30)
             return
 
         for ap in access_points:
-            name = ap["ssid"]
-            if ap["connected"]:
-                name = "*" + name     # * = the network the Pi is on
-            text = f"{ap['signal']:>4} {name[:16]:<16} ch{ap['channel']:<4}{ap['security']}"
-            tk.Button(
-                self.wifi_rows, text=text, font=("Courier", 12, "bold"), anchor="w",
-                bg=CARD_BG, fg=signal_color(ap["signal"]), activebackground=BAR_BG,
-                activeforeground="#FFFFFF", relief=tk.RIDGE, pady=3,
-                command=lambda a=ap: self.show_ap_info(a)
-            ).pack(fill=tk.X, padx=6, pady=1)
+            row = tk.Frame(self.wifi_rows, bg=CARD_BG)
+            row.pack(fill=tk.X, padx=8, pady=2)
+            name = ap["ssid"] + ("  (Pi)" if ap["connected"] else "")
+            lock = "open" if ap["security"] == "OPEN" else "locked"
+            parts = [
+                tk.Label(row, text=signal_bars(ap["signal"]), font=("DejaVu Sans Mono", 12, "bold"),
+                         bg=CARD_BG, fg=signal_color(ap["signal"])),
+                tk.Label(row, text=name, font=("Helvetica", 12, "bold"), bg=CARD_BG, fg=TEXT, anchor="w"),
+                tk.Label(row, text=f"{band_name(ap['freq'])}  {lock}", font=("Helvetica", 10), bg=CARD_BG, fg=MUTED),
+            ]
+            parts[0].pack(side=tk.LEFT, padx=(8, 4), pady=5)
+            parts[2].pack(side=tk.RIGHT, padx=8)
+            parts[1].pack(side=tk.LEFT, fill=tk.X, expand=True)
+            for widget in [row] + parts:
+                widget.bind("<ButtonRelease-1>", lambda event, a=ap: self.show_ap_info(a))
 
     # ignore the tap if the finger was dragging, otherwise scrolling
     # would open whatever row you started on
     def show_ap_info(self, ap):
         if self.drag_moved:
             return
-        self.ap_lbl.config(text=format_ap_detail(ap))
+        for child in self.ap_card.winfo_children():
+            child.destroy()
+        card = self.make_card(self.ap_card, ap["ssid"])
+        for label, value in ap_detail_rows(ap)[1:]:
+            self.make_row(card, label, value)
+        tk.Frame(card, bg=CARD_BG, height=6).pack()
         self.show_frame(self.ap_frame, "ap")
         self.ap_canvas.yview_moveto(0)
 
     # --- WI-FI SPEED TEST ---
 
+    # runs once the first time you open it, after that use Run
     def open_wifi_speed(self):
         self.show_frame(self.wifi_speed_frame, "wifi_speed")
         self.wifi_speed_canvas.yview_moveto(0)
-        self.start_wifi_speed_test()
+        if not self.wifi_speed_done:
+            self.start_wifi_speed_test()
 
     def start_wifi_speed_test(self):
         if self.wifi_speed_running:
             return
         if not has_wifi():
-            self.wifi_speed_status_lbl.config(text=f"No Wi-Fi adapter found ({WIFI_INTERFACE})", fg="#FF5252")
+            self.wifi_speed_status_lbl.config(text="No Wi-Fi adapter on this device", fg=BAD)
             return
         wifi_ip = get_ip(WIFI_INTERFACE)
         if wifi_ip == "":
-            self.wifi_speed_status_lbl.config(text="Pi isn't connected to a Wi-Fi network", fg="#FF5252")
+            self.wifi_speed_status_lbl.config(text="The Pi isn't connected to Wi-Fi", fg=BAD)
             return
         if route_interface(wifi_ip) not in ("", WIFI_INTERFACE):
             # traffic would go out the cable, so the numbers wouldn't be wifi
-            self.wifi_speed_status_lbl.config(text="Internet goes out the cable - unplug it to test Wi-Fi",
-                                              fg="#FF5252")
+            self.wifi_speed_status_lbl.config(text="Unplug the cable to test Wi-Fi", fg=BAD)
             return
         self.wifi_speed_running = True
-        self.wifi_speed_button.config(text="Testing...", fg="#FFFF00")
+        self.wifi_speed_done = True
+        self.wifi_speed_button.config(text="Testing...")
         threading.Thread(target=self.wifi_speed_thread, daemon=True).start()
 
-    def set_wifi_speed_status(self, text, color="#00E5FF"):
+    def set_wifi_speed_status(self, text, color=ACCENT):
         self.root.after(0, lambda: self.wifi_speed_status_lbl.config(text=text, fg=color))
 
     # ping burst + bandwidth test over wifi, then draw the graph
@@ -377,25 +380,25 @@ class WifiScreens:
             name = link["ssid"] if link else WIFI_INTERFACE
             logger.info("wifi speed test started on %s", name)
 
-            self.set_wifi_speed_status(f"{name}: testing latency / jitter / loss...")
+            self.set_wifi_speed_status(f"{name}: checking ping...")
             run_ping_test(results, WIFI_INTERFACE)
 
             if speed_test_lock.locked():
-                self.set_wifi_speed_status("Waiting for the cable speed test to finish...")
+                self.set_wifi_speed_status("Waiting for the cable test to finish...")
             curves = run_bandwidth_test(
                 results, WIFI_INTERFACE,
                 on_status=lambda text: self.set_wifi_speed_status(f"{name}: {text}")
             )
 
-            stamp = datetime.now().strftime("%I:%M:%S %p")
-            signal = f"  ({link['signal']} dBm)" if link and link["signal"] is not None else ""
-            self.set_wifi_speed_status(f"{name}{signal}  |  tested {stamp}", "#888888")
+            stamp = datetime.now().strftime("%I:%M %p")
+            signal = f", {SIGNAL_WORDS[signal_level(link['signal'])].lower()} signal" if link and link["signal"] is not None else ""
+            self.set_wifi_speed_status(f"{name}{signal}, tested {stamp}", MUTED)
         except Exception:
             logger.exception("wifi speed test failed")
-            self.set_wifi_speed_status("Wi-Fi speed test failed (see notafluke log)", "#FF5252")
+            self.set_wifi_speed_status("Wi-Fi speed test failed (see notafluke log)", BAD)
         self.root.after(0, self.finish_wifi_speed_test, results, curves)
 
     def finish_wifi_speed_test(self, results, curves):
         self.wifi_speed_running = False
-        self.wifi_speed_button.config(text="Run Again", fg="#FFFFFF")
+        self.wifi_speed_button.config(text="▶ Run")
         self.wifi_graph.show(results, curves)

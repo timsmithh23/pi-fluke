@@ -3,7 +3,7 @@
 import os
 import logging
 
-VERSION = "0.6"
+VERSION = "0.7"
 
 
 # VMs name ports enp0s3 etc instead of eth0/wlan0, so fall back to the first real one.
@@ -45,5 +45,11 @@ BG = "#121212"
 CARD_BG = "#1A1A1A"
 BAR_BG = "#2B2B2B"
 ACCENT = "#00E5FF"
+TEXT = "#FFFFFF"
+MUTED = "#8A8A8A"
+# status colours, only used for good / so-so / bad
+GOOD = "#76FF03"
+OK = "#FFD700"
+BAD = "#FF5252"
 
 logger = logging.getLogger("fluke-gui")

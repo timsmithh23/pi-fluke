@@ -58,6 +58,20 @@ def route_interface(source_ip, target=PING_TARGET):
     return match.group(1) if match else ""
 
 
+# link speed and duplex from the network card, e.g. "1000 Mbps full" ("--" if unknown)
+def link_speed(interface=INTERFACE):
+    try:
+        with open(f"/sys/class/net/{interface}/speed") as f:
+            speed = int(f.read().strip())
+        with open(f"/sys/class/net/{interface}/duplex") as f:
+            duplex = f.read().strip()
+    except (OSError, ValueError):
+        return "--"
+    if speed <= 0:
+        return "--"
+    return f"{speed} Mbps {duplex}"
+
+
 def speed_rating(mbps):
     if mbps < 10:
         return "Poor"

@@ -1,22 +1,28 @@
-# main window: top bar, scroll arrows, scanner/results screens and the scan loop
+# main window: top bar, tab bar (Cable / Wi-Fi / History), the cable test screens and the scan loop
 # history and wifi screens come from history.py and wifi.py as mixins
 
-import os
 import time
 import threading
 import tkinter as tk
 from tkinter import ttk
 
 from .config import (VERSION, INTERFACE, WIFI_INTERFACE, CARRIER_PATH, SWITCH_DISCOVERY_TIMEOUT,
-                     BG, CARD_BG, BAR_BG, ACCENT, logger)
+                     BG, CARD_BG, BAR_BG, ACCENT, TEXT, MUTED, GOOD, OK, BAD, logger)
 from .history import HistoryScreens, save_scan_record, now_stamp, is_clock_synced, format_stamp
 from .wifi import WifiScreens
 from .graph import MetricsGraph
-from .speed import get_ip, run_ping_test, run_bandwidth_test
+from .speed import get_ip, link_speed, read_number, run_ping_test, run_bandwidth_test
 from .switch import query_lldpd, parse_switch_topology, start_cdp_listener
 
 # same size as the Pi's TFT so a VM window looks like the real screen
 WINDOW_SIZE = "480x320"
+
+# the steps shown in the checklist while a scan runs
+SCAN_STEPS = ["Switch", "DNS", "Ping", "Speed"]
+
+# which tab each screen belongs to
+VIEW_TAB = {"scanner": "cable", "results": "cable", "wifi": "wifi", "ap": "wifi",
+            "wifi_speed": "wifi", "history": "history", "detail": "history"}
 
 
 # blank scan record. "--" while waiting, then each test starts as "Failed" until it passes
@@ -27,6 +33,7 @@ def empty_scan_results(started=False):
         "finished_at": "--",
         "clock_synced": is_clock_synced() if started else "unknown",
         "complete": False,
+        "link_speed": "--",
         "switch_name": "Not Found" if started else "--",
         "switch_ip": "Not Advertised" if started else "--",
         "switch_port": "Not Found" if started else "--",
@@ -48,6 +55,40 @@ def empty_scan_results(started=False):
     }
 
 
+# "1000 Mbps full" -> "1G", "100 Mbps half" -> "100M half"
+def short_link(text):
+    speed = read_number(text)
+    if speed is None:
+        return ""
+    short = f"{speed / 1000:g}G" if speed >= 1000 else f"{speed:g}M"
+    return short + (" half" if "half" in text else "")
+
+
+# the coloured row at the top of the results: [(text, colour), ...]
+def scan_summary(results):
+    link = results.get("link_speed", "--")
+    speed = read_number(link)
+    link_color = GOOD if speed is None or (speed >= 1000 and "half" not in link) else OK
+
+    found = results.get("switch_name") not in ("Not Found", "--", None)
+    dns_ok = "ms" in str(results.get("dns_time"))
+
+    down = read_number(results.get("speed_down"))
+    if down is None:
+        internet_color = BAD
+    elif results.get("speed_rating") == "Poor":
+        internet_color = OK
+    else:
+        internet_color = GOOD
+
+    return [
+        (("Link " + short_link(link)).strip(), link_color),
+        ("Switch", GOOD if found else OK),      # no CDP/LLDP isn't always a problem
+        ("DNS", GOOD if dns_ok else BAD),
+        ("Internet", internet_color),
+    ]
+
+
 class FlukeApp(HistoryScreens, WifiScreens):
     # windowed = 480x320 window for VM/desktop, start_workers=False is for tests
     def __init__(self, root, windowed=False, start_workers=True):
@@ -60,12 +101,12 @@ class FlukeApp(HistoryScreens, WifiScreens):
         self.root.configure(bg=BG)
         self.root.bind("<Escape>", self.close_window)
 
-        # which screen is up, and where Back on History/Wi-Fi goes
         self.current_view = "scanner"
-        self.return_view = "scanner"
+        self.cable_view = "scanner"     # scanner or results, whatever the test is on
         self.history_records = []
         self.history_page = 0
         self.exit_armed = False
+        self.rescan_requested = False
         self.scan_results = empty_scan_results()
         self.speed_curves = {"down": [], "up": []}   # samples for the speed graph
 
@@ -75,24 +116,33 @@ class FlukeApp(HistoryScreens, WifiScreens):
 
         self.style = ttk.Style()
         self.style.theme_use('default')
-        self.style.configure(
-            "Custom.Horizontal.TProgressbar",
-            troughcolor=CARD_BG,
-            background=ACCENT,
-            thickness=14
-        )
+        self.style.configure("Custom.Horizontal.TProgressbar", troughcolor=CARD_BG, background=ACCENT, thickness=10)
 
-        # title on the left, version on the right
+        # title on the left. exit, version and IP on the right
         top_bar = tk.Frame(root, bg=BAR_BG)
         top_bar.pack(side=tk.TOP, fill=tk.X)
         tk.Label(top_bar, text="NOT-A-FLUKE", font=("Helvetica", 11, "bold"), bg=BAR_BG, fg=ACCENT).pack(side=tk.LEFT, padx=6)
-        tk.Label(top_bar, text="v" + VERSION, font=("Helvetica", 11, "bold"), bg=BAR_BG, fg="#888888").pack(side=tk.RIGHT, padx=6)
+        self.exit_button = tk.Label(top_bar, text=" ✕ ", font=("DejaVu Sans", 12, "bold"), bg=BAR_BG, fg=BAD)
+        self.exit_button.pack(side=tk.RIGHT, padx=(4, 0))
+        self.exit_button.bind("<ButtonRelease-1>", lambda event: self.exit_pressed())
+        tk.Label(top_bar, text="v" + VERSION, font=("Helvetica", 10), bg=BAR_BG, fg=MUTED).pack(side=tk.RIGHT, padx=4)
         # show the IP (cable first, then wifi) so you know where to SSH
         self.ip_lbl = tk.Label(top_bar, text="", font=("Helvetica", 10), bg=BAR_BG, fg="#BBBBBB")
-        self.ip_lbl.pack(side=tk.RIGHT, padx=6)
+        self.ip_lbl.pack(side=tk.RIGHT, padx=4)
+
+        # tabs along the bottom, packed before the arrows so they span the full width
+        tab_bar = tk.Frame(root, bg=BAR_BG)
+        tab_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        self.tab_buttons = {}
+        for name, text, command in (("cable", "Cable", self.open_cable), ("wifi", "Wi-Fi", self.open_wifi),
+                                    ("history", "History", self.open_history)):
+            button = tk.Button(tab_bar, text=text, command=command, font=("Helvetica", 13, "bold"),
+                               bd=0, relief=tk.FLAT, pady=7, highlightthickness=0)
+            button.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1, pady=(1, 0))
+            self.tab_buttons[name] = button
 
         # up/down arrows on the right side
-        arrow_strip = tk.Frame(root, bg=BG, width=54)
+        arrow_strip = tk.Frame(root, bg=BG, width=40)
         arrow_strip.pack(side=tk.RIGHT, fill=tk.Y)
         arrow_strip.pack_propagate(False)
         self.make_arrow(arrow_strip, "▲", -1)
@@ -152,39 +202,39 @@ class FlukeApp(HistoryScreens, WifiScreens):
     # --- UI BUILDERS ---
 
     # big dark touch button, caller packs it
-    def make_button(self, parent, text, command):
+    def make_button(self, parent, text, command, size=14):
         return tk.Button(
-            parent, text=text, command=command, font=("Helvetica", 14, "bold"),
-            bg=BAR_BG, fg="#FFFFFF", activebackground="#444444", activeforeground="#FFFFFF",
-            padx=12, pady=6
+            parent, text=text, command=command, font=("Helvetica", size, "bold"),
+            bg=BAR_BG, fg=TEXT, activebackground="#444444", activeforeground=TEXT,
+            padx=12, pady=6 if size >= 14 else 2
         )
 
-    # cyan title strip at the top of a screen
-    def make_header(self, parent, text):
-        header = tk.Label(parent, text=text, font=("Helvetica", 16, "bold"), bg=ACCENT, fg="#000000", pady=3)
-        header.pack(fill=tk.X)
-        return header
+    # title strip for the screens you open from a list, with a Back button
+    def make_header(self, parent, text, back=None):
+        bar = tk.Frame(parent, bg=BG)
+        bar.pack(fill=tk.X, pady=(4, 0))
+        if back is not None:
+            self.make_button(bar, "‹ Back", back, size=11).pack(side=tk.LEFT, padx=6)
+        tk.Label(bar, text=text, font=("Helvetica", 13, "bold"), bg=BG, fg=ACCENT).pack(side=tk.LEFT, padx=6)
+        return bar
+
+    # two or three buttons side by side, the active one highlighted (Wi-Fi: Networks | Speed)
+    def make_switcher(self, parent, options, active):
+        bar = tk.Frame(parent, bg=BG)
+        bar.pack(fill=tk.X, padx=6, pady=(4, 2))
+        for text, command in options:
+            on = text == active
+            tk.Button(bar, text=text, command=command, font=("Helvetica", 11, "bold"), relief=tk.FLAT, bd=0,
+                      bg=ACCENT if on else BAR_BG, fg="#000000" if on else TEXT, pady=3,
+                      activebackground=ACCENT, highlightthickness=0).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=1)
+        return bar
 
     # big arrow button on the right strip, hold it to keep scrolling
     def make_arrow(self, parent, symbol, direction):
-        arrow = tk.Label(
-            parent, text=symbol, font=("DejaVu Sans", 22, "bold"),
-            bg=BAR_BG, fg=ACCENT, relief=tk.RAISED, bd=2
-        )
+        arrow = tk.Label(parent, text=symbol, font=("DejaVu Sans", 16, "bold"), bg=BAR_BG, fg=ACCENT, relief=tk.RAISED, bd=1)
         arrow.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=2, pady=2)
         arrow.bind("<ButtonPress-1>", lambda event: self.arrow_pressed(arrow, direction))
         arrow.bind("<ButtonRelease-1>", lambda event: self.arrow_released(arrow))
-
-    # History / Wi-Fi / Exit buttons along the bottom
-    def make_bottom_bar(self, parent):
-        bar = tk.Frame(parent, bg=BG)
-        bar.pack(side=tk.BOTTOM, fill=tk.X, pady=4)
-        self.make_button(bar, "History", self.open_history).pack(side=tk.LEFT, expand=True)
-        self.make_button(bar, "Wi-Fi", self.open_wifi).pack(side=tk.LEFT, expand=True)
-        exit_button = self.make_button(bar, "Exit", self.exit_pressed)
-        exit_button.config(fg="#FF5252")
-        exit_button.pack(side=tk.LEFT, expand=True)
-        return exit_button
 
     # scrollable box, returns (canvas, inner frame) to put widgets in
     def make_scroll_area(self, parent):
@@ -196,111 +246,102 @@ class FlukeApp(HistoryScreens, WifiScreens):
         canvas.bind("<Configure>", lambda event: canvas.itemconfig(window, width=event.width))
         return canvas, inner
 
+    # a card with a small title, rows go in with make_row
+    def make_card(self, parent, title):
+        card = tk.Frame(parent, bg=CARD_BG)
+        card.pack(fill=tk.X, padx=8, pady=5)
+        tk.Label(card, text=title, font=("Helvetica", 12, "bold"), bg=CARD_BG, fg=ACCENT, anchor="w").pack(fill=tk.X, padx=10, pady=(6, 2))
+        return card
+
+    # one "label   value" line in a card, returns the value label to fill in later
+    def make_row(self, card, label, value="--"):
+        row = tk.Frame(card, bg=CARD_BG)
+        row.pack(fill=tk.X, padx=10, pady=1)
+        tk.Label(row, text=label, width=11, anchor="w", font=("Helvetica", 11), bg=CARD_BG, fg=MUTED).pack(side=tk.LEFT)
+        value_lbl = tk.Label(row, text=value, anchor="w", justify=tk.LEFT, wraplength=260,
+                             font=("Helvetica", 11, "bold"), bg=CARD_BG, fg=TEXT)
+        value_lbl.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        return value_lbl
+
     def build_scanner_ui(self):
         self.scanner_frame = tk.Frame(self.container, bg=BG)
 
-        self.status_label = tk.Label(
-            self.scanner_frame, text="WAITING FOR CABLE...", font=("Helvetica", 20, "bold"),
-            bg=BAR_BG, fg="#FFA500", pady=8
-        )
+        self.status_label = tk.Label(self.scanner_frame, text="WAITING FOR CABLE...", font=("Helvetica", 18, "bold"),
+                                     bg=BAR_BG, fg=OK, pady=8)
         self.status_label.pack(fill=tk.X)
 
-        self.mode_label = tk.Label(
-            self.scanner_frame, text="Ready", font=("Helvetica", 14, "italic"),
-            bg=BG, fg="#888888"
-        )
-        self.mode_label.pack(pady=4)
+        # ✓ Switch  ● DNS  ○ Ping  ○ Speed
+        steps = tk.Frame(self.scanner_frame, bg=BG)
+        steps.pack(pady=(10, 0))
+        self.step_labels = []
+        for name in SCAN_STEPS:
+            label = tk.Label(steps, text="○ " + name, font=("DejaVu Sans", 12, "bold"), bg=BG, fg=MUTED)
+            label.pack(side=tk.LEFT, padx=8)
+            self.step_labels.append(label)
 
-        self.timer_label = tk.Label(
-            self.scanner_frame, text="--:--", font=("Helvetica", 40, "bold"),
-            bg=BG, fg="#FFFFFF"
-        )
+        self.timer_label = tk.Label(self.scanner_frame, text="--:--", font=("Helvetica", 40, "bold"), bg=BG, fg=TEXT)
         self.timer_label.pack(pady=2)
 
-        # loading screen for the speed test
+        # loading bar for the speed test
         self.loading_frame = tk.Frame(self.scanner_frame, bg=BG)
-        self.loading_text = tk.Label(
-            self.loading_frame, text="", font=("Helvetica", 14),
-            bg=BG, fg=ACCENT
-        )
+        self.loading_text = tk.Label(self.loading_frame, text="", font=("Helvetica", 13), bg=BG, fg=ACCENT)
         self.loading_text.pack(pady=5)
-        self.progress_bar = ttk.Progressbar(
-            self.loading_frame, style="Custom.Horizontal.TProgressbar",
-            mode="indeterminate", length=360
-        )
+        self.progress_bar = ttk.Progressbar(self.loading_frame, style="Custom.Horizontal.TProgressbar",
+                                            mode="indeterminate", length=320)
         self.progress_bar.pack(pady=4)
-
-        self.scanner_exit_button = self.make_bottom_bar(self.scanner_frame)
-
-    def make_card(self, title):
-        card = tk.Frame(self.scroll_content, bg=CARD_BG, bd=2, relief=tk.RIDGE)
-        card.pack(fill=tk.X, padx=15, pady=8)
-        tk.Label(card, text=title, font=("Helvetica", 14, "bold"), bg=CARD_BG, fg="#FFFFFF").pack(pady=4)
-        return card
-
-    def make_topo_line(self, card, text):
-        label = tk.Label(card, text=text, font=("Courier", 13, "bold"), bg=CARD_BG, fg="#76FF03",
-                         anchor="w", justify=tk.LEFT, wraplength=360)
-        label.pack(fill=tk.X, padx=15, pady=1)
-        return label
 
     def build_results_ui(self):
         self.results_frame = tk.Frame(self.container, bg=BG)
-        self.make_header(self.results_frame, "DIAGNOSTIC COMPLETE")
-
-        # pack the button bar before the canvas so it stays on screen while cards scroll
-        self.results_exit_button = self.make_bottom_bar(self.results_frame)
         self.scroll_canvas, self.scroll_content = self.make_scroll_area(self.results_frame)
 
-        # --- timestamp ---
-        self.lbl_tested = tk.Label(
-            self.scroll_content, text="Tested: --", font=("Helvetica", 12),
-            bg=BG, fg="#888888"
-        )
-        self.lbl_tested.pack(pady=(8, 0))
+        # pass / fail at a glance
+        summary = tk.Frame(self.scroll_content, bg=BG)
+        summary.pack(fill=tk.X, padx=8, pady=(8, 2))
+        self.summary_labels = []
+        for k in range(4):
+            label = tk.Label(summary, text="", font=("DejaVu Sans", 11, "bold"), bg=CARD_BG, fg=MUTED, pady=4)
+            label.grid(row=0, column=k, sticky="ew", padx=2)
+            summary.columnconfigure(k, weight=1)
+            self.summary_labels.append(label)
 
-        # --- switch card ---
-        topo = self.make_card("Switch Topology")
-        self.lbl_sw = self.make_topo_line(topo, "SW: --")
-        # own line so a long switch name doesn't push it off screen
-        self.lbl_via = self.make_topo_line(topo, "VIA: --")
-        self.lbl_ip = self.make_topo_line(topo, "IP: --")
-        self.lbl_port = self.make_topo_line(topo, "PORT: --")
-        self.lbl_vlan = self.make_topo_line(topo, "VLAN: --")
-        self.lbl_voice = self.make_topo_line(topo, "VOICE: --")
-        # PoE info from the switch, the Pi can't measure voltage itself
-        self.lbl_poe = self.make_topo_line(topo, "POE: --")
+        when = tk.Frame(self.scroll_content, bg=BG)
+        when.pack(fill=tk.X, padx=8, pady=2)
+        self.lbl_tested = tk.Label(when, text="Tested: --", font=("Helvetica", 10), bg=BG, fg=MUTED)
+        self.lbl_tested.pack(side=tk.LEFT)
+        self.rescan_button = self.make_button(when, "↻ Rescan", self.rescan_pressed, size=11)
+        self.rescan_button.pack(side=tk.RIGHT)
 
-        # --- bandwidth card ---
-        speed = self.make_card("Bandwidth")
-        self.res_speed_lbl = tk.Label(speed, text="Down: -- Mbps | Up: -- Mbps | Ping: -- ms", font=("Helvetica", 12), bg=CARD_BG, fg="#FFD700")
-        self.res_speed_lbl.pack(pady=(4, 0))
-        self.res_rating_lbl = tk.Label(speed, text="Rating: --", font=("Helvetica", 12, "bold"), bg=CARD_BG, fg="#FFD700")
-        self.res_rating_lbl.pack(pady=(0, 4))
+        switch = self.make_card(self.scroll_content, "Switch")
+        self.res_switch = self.make_row(switch, "Switch")
+        self.res_port = self.make_row(switch, "Port")
+        self.res_vlan = self.make_row(switch, "VLAN")
+        self.res_voice = self.make_row(switch, "Voice VLAN")
+        # what the switch says about power, the Pi can't measure it itself
+        self.res_poe = self.make_row(switch, "PoE")
+        self.res_link = self.make_row(switch, "Link")
+        self.res_switch_ip = self.make_row(switch, "Switch IP")
+        self.res_proto = self.make_row(switch, "Found via")
+        tk.Frame(switch, bg=CARD_BG, height=6).pack()
 
-        # --- DNS card ---
-        dns = self.make_card("DNS Activity")
-        self.res_dns_server_lbl = tk.Label(dns, text="Server: --", font=("Helvetica", 12), bg=CARD_BG, fg="#FF00FF")
-        self.res_dns_server_lbl.pack(pady=(0, 2))
-        self.res_dns_lbl = tk.Label(dns, text="Queries captured: 0 | Last: --", font=("Helvetica", 12), bg=CARD_BG, fg="#FF00FF")
-        self.res_dns_lbl.pack(pady=(0, 4))
+        dns = self.make_card(self.scroll_content, "DNS")
+        self.res_dns_server = self.make_row(dns, "Server")
+        self.res_dns_time = self.make_row(dns, "Answer")
+        self.res_dns_seen = self.make_row(dns, "Lookups")
+        tk.Frame(dns, bg=CARD_BG, height=6).pack()
 
-        # --- graph (graph.py) ---
-        metrics = self.make_card("Performance Metrics")
-        self.metrics_graph = MetricsGraph(metrics, INTERFACE)
-        self.metrics_graph.canvas.pack(fill=tk.X, padx=8, pady=6)
+        speed = self.make_card(self.scroll_content, "Speed")
+        self.metrics_graph = MetricsGraph(speed, INTERFACE)
+        self.metrics_graph.canvas.pack(fill=tk.X, padx=4, pady=4)
 
-        tk.Label(
-            self.scroll_content, text="Arrows / drag to scroll  |  Unplug cable to reset",
-            font=("Helvetica", 10), bg=BG, fg="#888888", pady=10
-        ).pack(fill=tk.X)
+        tk.Label(self.scroll_content, text="Drag or use the arrows to scroll", font=("Helvetica", 9),
+                 bg=BG, fg=MUTED, pady=8).pack(fill=tk.X)
 
     # --- EVENT HANDLERS ---
 
     def close_window(self, event):
         self.root.destroy()
 
-    # tap Exit once for "Sure?", again within 3s to quit
+    # tap ✕ once for "Sure?", again within 3s to quit
     # (the notafluke launcher puts the terminal back after)
     def exit_pressed(self):
         if self.exit_armed:
@@ -308,14 +349,17 @@ class FlukeApp(HistoryScreens, WifiScreens):
             self.root.destroy()
             return
         self.exit_armed = True
-        self.scanner_exit_button.config(text="Sure?", bg="#FF5252", fg="#FFFFFF")
-        self.results_exit_button.config(text="Sure?", bg="#FF5252", fg="#FFFFFF")
+        self.exit_button.config(text=" Sure? ", bg=BAD, fg=TEXT)
         self.root.after(3000, self.disarm_exit)
 
     def disarm_exit(self):
         self.exit_armed = False
-        self.scanner_exit_button.config(text="Exit", bg=BAR_BG, fg="#FF5252")
-        self.results_exit_button.config(text="Exit", bg=BAR_BG, fg="#FF5252")
+        self.exit_button.config(text=" ✕ ", bg=BAR_BG, fg=BAD)
+
+    # start a new scan without unplugging the cable
+    def rescan_pressed(self):
+        self.rescan_requested = True
+        self.rescan_button.config(text="Starting...")
 
     # scroll up (negative) or down (positive). History flips pages instead
     def scroll_by(self, steps):
@@ -371,61 +415,64 @@ class FlukeApp(HistoryScreens, WifiScreens):
 
     # --- UI STATE MANAGERS ---
 
-    # swap whatever screen is showing for `frame`, view is the name used by scroll/Back
+    # swap whatever screen is showing for `frame` and light up its tab
     def show_frame(self, frame, view):
         for other in self.frames:
             other.pack_forget()
         frame.pack(expand=True, fill=tk.BOTH)
         self.current_view = view
+        for name, button in self.tab_buttons.items():
+            on = name == VIEW_TAB[view]
+            button.config(bg=ACCENT if on else BAR_BG, fg="#000000" if on else TEXT,
+                          activebackground=ACCENT if on else "#444444")
 
-    # True while History or Wi-Fi is open. the test keeps running but won't
-    # pull you off those pages, Back takes you to it
-    def is_browsing(self):
-        return self.current_view in ("history", "detail", "wifi", "ap", "wifi_speed")
+    def current_tab(self):
+        return VIEW_TAB[self.current_view]
 
+    # Cable tab: the scanner or the results, whichever the test is on
+    def open_cable(self):
+        if self.cable_view == "results":
+            self.show_frame(self.results_frame, "results")
+        else:
+            self.show_frame(self.scanner_frame, "scanner")
+
+    # the test keeps running while you're on another tab, it just won't pull you back
     def show_scanner_ui(self):
         self.stop_loading_animation()
-        if self.is_browsing():
-            self.return_view = "scanner"
-            return
-        self.show_frame(self.scanner_frame, "scanner")
+        self.cable_view = "scanner"
+        if self.current_tab() == "cable":
+            self.show_frame(self.scanner_frame, "scanner")
 
     def show_results_ui(self):
         self.stop_loading_animation()
         results = self.scan_results
 
-        tested_text = f"Tested: {format_stamp(results['finished_at'])}"
+        for label, (text, color) in zip(self.summary_labels, scan_summary(results)):
+            label.config(text="● " + text, fg=color)
+
+        tested_text = f"Tested {format_stamp(results['finished_at'])}"
         if results["clock_synced"] != "yes":
-            tested_text += "  (clock not verified)"
+            tested_text += " (clock not synced)"
         self.lbl_tested.config(text=tested_text)
+        self.rescan_button.config(text="↻ Rescan")
 
-        self.lbl_sw.config(text=f"SW:    {results['switch_name']}")
-        self.lbl_via.config(text=f"VIA:   {results['switch_proto']}")
-        self.lbl_ip.config(text=f"IP:    {results['switch_ip']}")
-        self.lbl_port.config(text=f"PORT:  {results['switch_port']}")
-        self.lbl_vlan.config(text=f"VLAN:  {results['switch_vlan']}")
-        self.lbl_voice.config(text=f"VOICE: {results['switch_voice']}")
-        self.lbl_poe.config(text=f"POE:   {results['switch_poe']}")
-
-        self.res_speed_lbl.config(text=f"Down: {results['speed_down']} | Up: {results['speed_up']} | Ping: {results['speed_ping']}")
-        self.res_rating_lbl.config(text=f"Rating: {results['speed_rating']}")
-        self.res_dns_lbl.config(text=f"Queries: {results['dns_queries']} | Domain: {results['dns_last_domain']}")
-        self.res_dns_server_lbl.config(text=f"Server: {results['dns_server']} | Answer: {results['dns_time']}")
+        self.res_switch.config(text=results["switch_name"])
+        self.res_port.config(text=results["switch_port"])
+        self.res_vlan.config(text=results["switch_vlan"])
+        self.res_voice.config(text=results["switch_voice"])
+        self.res_poe.config(text=results["switch_poe"])
+        self.res_link.config(text=results["link_speed"])
+        self.res_switch_ip.config(text=results["switch_ip"])
+        self.res_proto.config(text=results["switch_proto"])
+        self.res_dns_server.config(text=results["dns_server"])
+        self.res_dns_time.config(text=results["dns_time"])
+        self.res_dns_seen.config(text=f"{results['dns_queries']}  (last: {results['dns_last_domain']})")
         self.metrics_graph.show(results, self.speed_curves)
 
-        if self.is_browsing():
-            self.return_view = "results"
-            return
-        self.show_frame(self.results_frame, "results")
-        self.scroll_canvas.yview_moveto(0)
-
-    # go back to scanner or results, whichever the test is on. packs the frame
-    # directly so a running speed test animation keeps going
-    def go_back_to_main(self):
-        if self.return_view == "results":
+        self.cable_view = "results"
+        if self.current_tab() == "cable":
             self.show_frame(self.results_frame, "results")
-        else:
-            self.show_frame(self.scanner_frame, "scanner")
+            self.scroll_canvas.yview_moveto(0)
 
     def start_loading_animation(self, message):
         self.timer_label.pack_forget()
@@ -441,9 +488,16 @@ class FlukeApp(HistoryScreens, WifiScreens):
         self.loading_frame.pack_forget()
         self.timer_label.pack(pady=10)
 
-    def update_scanner(self, status, status_color, mode, timer_text):
+    # step = index in SCAN_STEPS that's running now (-1 = waiting, 4 = all done)
+    def update_scanner(self, status, status_color, step, timer_text):
         self.status_label.config(text=status, fg=status_color)
-        self.mode_label.config(text=mode)
+        for k, label in enumerate(self.step_labels):
+            if k < step:
+                label.config(text="✓ " + SCAN_STEPS[k], fg=GOOD)
+            elif k == step:
+                label.config(text="● " + SCAN_STEPS[k], fg=ACCENT)
+            else:
+                label.config(text="○ " + SCAN_STEPS[k], fg=MUTED)
         self.timer_label.config(text=timer_text)
 
     # stamp the finish time and log the scan. True when results are ready,
@@ -507,11 +561,12 @@ class FlukeApp(HistoryScreens, WifiScreens):
         # import scapy here on the worker thread since it's slow, so the screen shows up right away
         from .dns import run_dns_test
 
+        testing = "TESTING NETWORK..."
         while self.running:
             # 1. wait for a cable
             self.root.after(0, self.show_scanner_ui)
             if not self.is_cable_connected():
-                self.root.after(0, self.update_scanner, "WAITING FOR CABLE...", "#FFA500", "Standby", "--:--")
+                self.root.after(0, self.update_scanner, "WAITING FOR CABLE...", OK, -1, "--:--")
                 while not self.is_cable_connected() and self.running:
                     time.sleep(1)
 
@@ -519,17 +574,14 @@ class FlukeApp(HistoryScreens, WifiScreens):
                 break
 
             self.scan_results = empty_scan_results(started=True)
+            self.scan_results["link_speed"] = link_speed()
             self.cdp_poe = ""    # forget the last cable's PoE
             self.speed_curves = {"down": [], "up": []}
             logger.info("cable connected, scan started (clock synced: %s)", self.scan_results["clock_synced"])
 
             # 2. find the switch (up to SWITCH_DISCOVERY_TIMEOUT)
-            start_minutes = SWITCH_DISCOVERY_TIMEOUT // 60
-            start_seconds = SWITCH_DISCOVERY_TIMEOUT % 60
-            self.root.after(
-                0, self.update_scanner, "TESTING NETWORK...", "#FFFF00",
-                "Mode: Switch Discovery (CDP/LLDP)", f"{start_minutes:02d}:{start_seconds:02d}"
-            )
+            start = f"{SWITCH_DISCOVERY_TIMEOUT // 60:02d}:{SWITCH_DISCOVERY_TIMEOUT % 60:02d}"
+            self.root.after(0, self.update_scanner, testing, TEXT, 0, start)
             switch_found = self.discover_switch_topology()
             if not self.is_cable_connected():
                 self.finish_scan(False)
@@ -542,7 +594,7 @@ class FlukeApp(HistoryScreens, WifiScreens):
                 self.scan_results["switch_poe"] = self.cdp_poe
 
             # 3. DNS lookup out the test port + 3s of sniffing
-            self.root.after(0, self.update_scanner, "TESTING NETWORK...", "#FFFF00", "Mode: DNS Test", "00:03")
+            self.root.after(0, self.update_scanner, testing, TEXT, 1, "00:03")
             self.sniffing = True
             timer_thread = threading.Thread(target=self.countdown_timer, args=(3,))
             timer_thread.start()
@@ -560,14 +612,14 @@ class FlukeApp(HistoryScreens, WifiScreens):
                 continue
 
             # 3b. ~4s of pings for latency, jitter and loss
-            self.root.after(0, self.update_scanner, "TESTING NETWORK...", "#FFFF00", "Mode: Latency / Jitter / Loss", "")
+            self.root.after(0, self.update_scanner, testing, TEXT, 2, "")
             run_ping_test(self.scan_results)
             if not self.is_cable_connected():
                 self.finish_scan(False)
                 continue
 
-            # 4. speed test with the loading animation
-            self.root.after(0, self.update_scanner, "TESTING NETWORK...", "#FFFF00", "Mode: Bandwidth Speed Test", "")
+            # 4. speed test with the loading bar
+            self.root.after(0, self.update_scanner, testing, TEXT, 3, "")
             self.root.after(0, self.start_loading_animation, "Connecting to closest server...")
             self.speed_curves = run_bandwidth_test(
                 self.scan_results, INTERFACE,
@@ -580,8 +632,11 @@ class FlukeApp(HistoryScreens, WifiScreens):
                 continue
 
             self.finish_scan(True)
+            self.root.after(0, self.update_scanner, "DONE", GOOD, 4, "")
             self.root.after(0, self.show_results_ui)
 
-            while self.is_cable_connected() and self.running:
-                time.sleep(1)
-            logger.info("cable removed")
+            # wait for the cable to come out, or for Rescan
+            self.rescan_requested = False
+            while self.is_cable_connected() and self.running and not self.rescan_requested:
+                time.sleep(0.5)
+            logger.info("rescan pressed" if self.rescan_requested else "cable removed")

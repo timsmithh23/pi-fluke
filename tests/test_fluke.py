@@ -58,9 +58,14 @@ class WifiTests(unittest.TestCase):
         self.assertEqual(link, {"ssid": "HomeNet", "signal": -52})
 
     def test_ap_detail(self):
-        text = wifi.format_ap_detail(wifi.parse_iw_scan(IW_SCAN)[0])
-        self.assertIn("Signal:   -48 dBm (100%)", text)
-        self.assertIn("2.4 GHz", text)
+        rows = dict(wifi.ap_detail_rows(wifi.parse_iw_scan(IW_SCAN)[0]))
+        self.assertEqual(rows["Signal"], "Excellent (-48 dBm)")
+        self.assertEqual(rows["Band"], "2.4 GHz, channel 6")
+        self.assertEqual(rows["Security"], "Locked (WPA2/3)")
+
+    def test_signal_words(self):
+        self.assertEqual([wifi.signal_level(d) for d in (-45, -65, -75, -90)], [3, 2, 1, 0])
+        self.assertEqual(wifi.signal_bars(-65), "▂▄▆ ")
 
 
 class SpeedTests(unittest.TestCase):
@@ -90,6 +95,23 @@ class SpeedTests(unittest.TestCase):
 
     def test_rating(self):
         self.assertEqual([speed.speed_rating(m) for m in (5, 20, 50, 200, 900)], ["Poor", "Fair", "Good", "Very Good", "Excellent"])
+
+
+class SummaryTests(unittest.TestCase):
+    def test_short_link(self):
+        from fluke.app import short_link
+        self.assertEqual([short_link(t) for t in ("1000 Mbps full", "100 Mbps half", "2500 Mbps full", "--")],
+                         ["1G", "100M half", "2.5G", ""])
+
+    def test_summary_colours(self):
+        from fluke.app import scan_summary, empty_scan_results
+        from fluke.config import GOOD, OK, BAD
+        good = dict(empty_scan_results(), link_speed="1000 Mbps full", switch_name="SW1",
+                    dns_time="12 ms", speed_down="90 Mbps", speed_rating="Good")
+        self.assertEqual(scan_summary(good), [("Link 1G", GOOD), ("Switch", GOOD), ("DNS", GOOD), ("Internet", GOOD)])
+        bad = dict(empty_scan_results(), link_speed="100 Mbps half", switch_name="Not Found",
+                   dns_time="no reply", speed_down="Failed")
+        self.assertEqual([c for t, c in scan_summary(bad)], [OK, OK, BAD, BAD])
 
 
 class SwitchTests(unittest.TestCase):
@@ -145,12 +167,19 @@ class ScreenTests(unittest.TestCase):
         try:
             app = FlukeApp(root, windowed=True, start_workers=False)
             app.scan_results = empty_scan_results(started=True)
-            app.show_results_ui()
+            app.update_scanner("TESTING", "#FFFFFF", 2, "")
             app.open_history()
+            app.show_results_ui()                       # finishing on another tab doesn't pull you back
+            self.assertEqual(app.current_view, "history")
+            app.open_cable()
+            self.assertEqual(app.current_view, "results")
             app.show_wifi_frame()
             app.show_wifi_results(wifi.parse_iw_scan(IW_SCAN))
+            app.show_ap_info(wifi.parse_iw_scan(IW_SCAN)[0])
             app.show_frame(app.wifi_speed_frame, "wifi_speed")
             app.finish_wifi_speed_test({"speed_down": "50 Mbps"}, {"down": [1, 2, 3], "up": []})
+            app.rescan_pressed()
+            self.assertTrue(app.rescan_requested)
             root.update()
             self.assertEqual(app.current_view, "wifi_speed")
         finally:

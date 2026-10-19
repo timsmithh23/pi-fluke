@@ -11,7 +11,7 @@ from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 from .config import (LOG_DIR, SCAN_LOG_PATH, EVENT_LOG_PATH, MAX_SCAN_RECORDS, HISTORY_PAGE_SIZE,
-                     BG, CARD_BG, BAR_BG, ACCENT, logger)
+                     BG, CARD_BG, BAR_BG, ACCENT, TEXT, MUTED, logger)
 
 
 # --- LOGGING + HISTORY HELPERS (no tkinter, so it works over SSH) ---
@@ -145,6 +145,7 @@ def format_record_detail(record):
         f"PORT:  {record.get('switch_port', '--')}",
         f"VLAN:  {record.get('switch_vlan', '--')}",
         f"VOICE: {record.get('switch_voice', '--')}",
+        f"LINK:  {record.get('link_speed', '--')}",
         "",
         f"Down: {record.get('speed_down', '--')}",
         f"Up:   {record.get('speed_up', '--')}",
@@ -188,40 +189,32 @@ class HistoryScreens:
     # paged list of past scans, 6 per page
     def build_history_ui(self):
         self.history_frame = tk.Frame(self.container, bg=BG)
-        self.make_header(self.history_frame, "SCAN HISTORY")
 
         #pack the bottom row first so the list gets the leftover space
         nav = tk.Frame(self.history_frame, bg=BG)
         nav.pack(side=tk.BOTTOM, fill=tk.X, padx=6, pady=4)
-        self.make_button(nav, "< Newer", self.history_newer).pack(side=tk.LEFT)
-        self.make_button(nav, "Older >", self.history_older).pack(side=tk.RIGHT)
-        self.make_button(nav, "Back", self.go_back_to_main).pack(expand=True)
-
-        self.history_page_lbl = tk.Label(self.history_frame, text="", font=("Helvetica", 10), bg=BG, fg="#888888")
-        self.history_page_lbl.pack(side=tk.BOTTOM)
+        self.make_button(nav, "‹ Newer", self.history_newer, size=11).pack(side=tk.LEFT)
+        self.make_button(nav, "Older ›", self.history_older, size=11).pack(side=tk.RIGHT)
+        self.history_page_lbl = tk.Label(nav, text="", font=("Helvetica", 10), bg=BG, fg=MUTED)
+        self.history_page_lbl.pack(expand=True)
 
         self.history_rows = tk.Frame(self.history_frame, bg=BG)
         self.history_rows.pack(fill=tk.BOTH, expand=True, padx=6, pady=4)
 
     def build_detail_ui(self):
         self.detail_frame = tk.Frame(self.container, bg=BG)
-        self.make_header(self.detail_frame, "SCAN DETAIL")
-
-        self.make_button(self.detail_frame, "Back", self.show_history_frame).pack(side=tk.BOTTOM, pady=4)
+        self.make_header(self.detail_frame, "Scan detail", back=self.show_history_frame)
 
         # scrollable since a full scan doesn't fit on screen
         self.detail_canvas, detail_inner = self.make_scroll_area(self.detail_frame)
         self.detail_lbl = tk.Label(
             detail_inner, text="", font=("Courier", 12, "bold"),
-            bg=BG, fg="#76FF03", justify=tk.LEFT, anchor="nw"
+            bg=BG, fg=TEXT, justify=tk.LEFT, anchor="nw"
         )
         self.detail_lbl.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
 
     # reload from disk and go to page 1
     def open_history(self):
-        if self.current_view == "scanner" or self.current_view == "results":
-            self.return_view = self.current_view
-
         self.history_records = load_scan_history()
         self.history_page = 0
         self.render_history_page()
@@ -238,7 +231,7 @@ class HistoryScreens:
         if total == 0:
             tk.Label(
                 self.history_rows, text="No scans logged yet", font=("Helvetica", 14),
-                bg=BG, fg="#888888"
+                bg=BG, fg=MUTED
             ).pack(pady=40)
             self.history_page_lbl.config(text="0 / 0")
             return
@@ -248,12 +241,12 @@ class HistoryScreens:
         for record in self.history_records[start:start + HISTORY_PAGE_SIZE]:
             tk.Button(
                 self.history_rows, text=format_record_summary(record), font=("Courier", 11),
-                anchor="w", bg=CARD_BG, fg="#FFFFFF", activebackground=BAR_BG,
-                activeforeground="#FFFFFF", relief=tk.RIDGE, pady=3,
+                anchor="w", bg=CARD_BG, fg=TEXT, activebackground=BAR_BG,
+                activeforeground=TEXT, relief=tk.FLAT, pady=4,
                 command=lambda r=record: self.show_detail_ui(r)
-            ).pack(fill=tk.X, pady=1)
+            ).pack(fill=tk.X, pady=2)
 
-        self.history_page_lbl.config(text=f"Page {self.history_page + 1} / {pages}   (! = cut short)")
+        self.history_page_lbl.config(text=f"Page {self.history_page + 1} / {pages}  (! = cut short)")
 
     def history_newer(self):
         if self.history_page > 0:
