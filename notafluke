@@ -5,12 +5,9 @@
 #   notafluke            start the GUI (-f = in the foreground, Ctrl-C stops it)
 #   notafluke stop       close the GUI, give the screen back to the terminal
 #   notafluke log        show the GUI's output
-#   notafluke view       watch / use the small screen from your computer (see CHEATSHEET.md)
-#   notafluke window     open the GUI on your computer instead, over ssh -X (Ctrl-C closes it)
 #   notafluke test       run the tests
 #   notafluke calibrate  calibrate the touchscreen
 #   notafluke update     git pull and restart the GUI if running
-#   notafluke try <br>   run a GitHub branch from its own copy in ~/fluke-try
 #   notafluke install    install packages, the notafluke command and start-on-boot
 #   notafluke autostart on|off   start the GUI on boot or not (no on/off = show which)
 
