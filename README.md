@@ -17,6 +17,7 @@ A touchscreen network tester for the Raspberry Pi. Plug it into an Ethernet drop
 | `notafluke update` | pull the latest code for this branch and restart |
 | `notafluke try <branch>` | run a GitHub branch from its own copy in `~/fluke-try` |
 | `notafluke install` | install everything (first time on a new Pi or VM) |
+| `notafluke autostart on/off` | start the GUI when the Pi boots, or don't |
 
 Don't run the Python file with `sudo python3 ...`. Use `notafluke`, it sorts out sudo and the display. Running Python directly over SSH gives the `no display name and no $DISPLAY environment variable` error.
 
@@ -48,6 +49,8 @@ cd pi-fluke
 ```
 
 You can also just run `notafluke` and it will install anything missing on the first run. Packages come from apt, not pip, since newer Pi OS and Debian block `sudo pip install`.
+
+On the Pi, `install` also makes it start on boot. Hit Exit to get to the terminal, and `notafluke autostart off` if you don't want it on boot.
 
 ## Testing on a VM
 

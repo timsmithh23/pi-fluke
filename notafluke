@@ -12,7 +12,8 @@
 #   notafluke test       run the tests
 #   notafluke update     git pull and restart the GUI if running
 #   notafluke try <br>   run a GitHub branch from its own copy in ~/fluke-try
-#   notafluke install    install packages and the notafluke command
+#   notafluke install    install packages, the notafluke command and start-on-boot
+#   notafluke autostart on|off   start the GUI on boot or not
 
 DIR="$(dirname "$(readlink -f "$0")")"
 SELF="$DIR/notafluke"
@@ -64,6 +65,11 @@ if [ "$(id -u)" != 0 ]; then
   exec sudo "$SELF" "$@"
 fi
 
+# at boot the screen driver can show up a few seconds late, so wait for it
+if [ "$1" = "boot" ]; then
+  for i in $(seq 30); do grep -qs '^fb_' /sys/class/graphics/fb*/name && break; sleep 1; done
+fi
+
 # find the small screen (framebuffer name starts with fb_)
 FB=$(grep -l '^fb_' /sys/class/graphics/fb*/name 2>/dev/null | head -1 | cut -d/ -f5)
 
@@ -88,6 +94,31 @@ install_all() {
     ln -sf "$SELF" /usr/local/bin/notafluke
     ln -sf "$DIR/fluke-calibrate" /usr/local/bin/fluke-calibrate
   fi
+  # start on boot, only on the Pi (a VM has no small screen to show it on)
+  [ -n "$FB" ] && [ "$1" = "relink" ] && autostart on
+  return 0
+}
+
+# systemd service that runs "notafluke boot" when the Pi starts. The Exit button still
+# drops you to the terminal, it just won't come back until the next boot.
+autostart() {
+  if [ "$1" = "off" ]; then
+    systemctl disable notafluke.service 2>/dev/null; echo "Won't start on boot anymore."; return
+  fi
+  cat > /etc/systemd/system/notafluke.service <<UNIT
+[Unit]
+Description=Not-A-Fluke touchscreen GUI
+After=systemd-user-sessions.service lldpd.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/notafluke boot
+Restart=no
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  systemctl daemon-reload && systemctl enable notafluke.service && echo "Starts on boot now (turn off: notafluke autostart off)."
 }
 
 stop() { pkill -f "Xorg $DISPLAY_NUM -config /run/notafluke" 2>/dev/null; pkill -f "$GUI_MATCH" 2>/dev/null; }
@@ -116,10 +147,12 @@ case "$1" in
     closed_screen
     exit 0 ;;
   install) install_all relink || exit 1; echo "Installed. Start it with:  notafluke"; exit 0 ;;
+  autostart) autostart "$2"; exit 0 ;;
+  boot) BOOTING=1; set -- -f ;;   # from the boot service: run in the foreground
 esac
 
 # install anything missing first
-has_everything || { echo "Installing what Not-A-Fluke needs (one time)..."; install_all || exit 1; }
+[ -n "$BOOTING" ] || has_everything || { echo "Installing what Not-A-Fluke needs (one time)..."; install_all || exit 1; }
 
 # stop any copy already running
 stop
