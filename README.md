@@ -1,8 +1,8 @@
 # Not-A-Fluke
 
-
-Quick how-to for everyday stuff, testing other versions and getting new code on the Pi: [CHEATSHEET.md](CHEATSHEET.md)
 A touchscreen network tester for the Raspberry Pi. Plug it into an Ethernet drop and it shows the switch, port, VLAN and PoE (from CDP/LLDP), checks DNS, measures latency, jitter and packet loss, and runs a speed test with a graph. The Wi-Fi tab scans nearby access points and can run the speed test over Wi-Fi too.
+
+Everyday how-to, testing other versions and getting new code on the Pi: see [CHEATSHEET.md](CHEATSHEET.md).
 
 ## Commands
 
