@@ -44,8 +44,8 @@ To test someone's branch, use `notafluke try <branch>` instead of switching bran
 ## Install
 
 ```bash
-git clone git@github.com:timsmithh23/pi-fluke.git
-cd pi-fluke
+git clone https://github.com/chrisf2020/Not-A-Fluke.git
+cd Not-A-Fluke
 ./notafluke install
 ```
 

@@ -11,7 +11,7 @@
 #   notafluke update     git pull and restart the GUI if running
 #   notafluke try <br>   run a GitHub branch from its own copy in ~/fluke-try
 #   notafluke install    install packages, the notafluke command and start-on-boot
-#   notafluke autostart on|off   start the GUI on boot or not
+#   notafluke autostart on|off   start the GUI on boot or not (no on/off = show which)
 
 DIR="$(dirname "$(readlink -f "$0")")"
 SELF="$DIR/notafluke"
@@ -124,9 +124,17 @@ UNIT
 # systemd service that runs "notafluke boot" when the Pi starts. The Exit button still
 # drops you to the terminal, it just won't come back until the next boot.
 autostart() {
-  if [ "$1" = "off" ]; then
-    systemctl disable notafluke.service 2>/dev/null; echo "Won't start on boot anymore."; return
-  fi
+  case "$1" in
+    off) systemctl disable --quiet notafluke.service 2>/dev/null
+         echo "Off: it won't start on boot anymore. (Still running now if it was, notafluke stop closes it.)"; return ;;
+    on) ;;
+    *) if systemctl is-enabled --quiet notafluke.service 2>/dev/null; then
+         echo "Autostart is ON (starts when the Pi boots). Turn off: notafluke autostart off"
+       else
+         echo "Autostart is OFF. Turn on: notafluke autostart on"
+       fi
+       return ;;
+  esac
   cat > /etc/systemd/system/notafluke.service <<UNIT
 [Unit]
 Description=Not-A-Fluke touchscreen GUI
@@ -140,7 +148,8 @@ Restart=no
 [Install]
 WantedBy=multi-user.target
 UNIT
-  systemctl daemon-reload && systemctl enable notafluke.service && echo "Starts on boot now (turn off: notafluke autostart off)."
+  systemctl daemon-reload && systemctl enable --quiet notafluke.service &&
+    echo "On: it'll start by itself the next time the Pi boots (sudo reboot to see it now)."
 }
 
 stop() { pkill -f "Xorg $DISPLAY_NUM -config /run/notafluke" 2>/dev/null; pkill -f "$GUI_MATCH" 2>/dev/null; }
